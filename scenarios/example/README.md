@@ -34,6 +34,26 @@ The deterministic PASS/FAIL gate is **log-based** (`rig_wait_event` inline asser
 The blessed server-log signature lives in `reference-logs/example-server.events` (6 normalized events).
 A signature move is a **regression** → investigate, or re-bless with `UPDATE_REFS=1 bin/run-example.sh`.
 
+## Screenshot signals demonstrated
+
+The example also exercises **both screenshot verification modes** (`docs/VERIFICATION.md`) — their
+*feature* value here is incidental; the point is to show the mechanics end-to-end in a runnable scenario:
+
+- **DYNAMIC pair (must DIFFER).** On client `a`'s display, one frame is captured **before** `b` logs in
+  (`10-a-before-b` — `a` alone, one minimap marker) and one **after** (`11-a-after-b` — `b`'s avatar now
+  in view, two markers). The gate is *motion present* — `RMSE(10,11) ≥ 0.02` (measured ~0.081) — the
+  inverse of a static match. A sync bug that left `b` invisible to `a` would leave the two frames
+  near-identical and **fail** this. The pair is never blessed; only its mutual delta is gated, in-script.
+- **STATIC blessed frame (must MATCH).** On client `b`'s display, `b`'s minimap is cropped to a stable
+  region (`20-b-minimap` — showing both player markers) and compared to a blessed reference within a
+  per-image tolerance (`reference-images/manifest.tsv`: `RMSE ≤ 0.03`, measured ~0.008–0.012). Cropping
+  to a **stable GUI region** is the KB-19 convention: the full 3D frame (animating water, a T-posed
+  avatar) is too variable to bless, but the minimap crop is not. Re-bless with
+  `UPDATE_REFS=1 bin/run-example.sh` (rewrites `reference-images/20-b-minimap.png`).
+
+Adjust the minimap crop for a different resolution via `CROP_MINIMAP` (default `88x84+950+576`, for the
+rig's 1280×720 screen), and the dynamic floor via `DYN_FLOOR`.
+
 ## The fixture
 
 `player/a.json` + `player/b.json` — two **returning** players (password = `a` for both), co-located in

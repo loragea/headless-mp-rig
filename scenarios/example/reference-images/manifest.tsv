@@ -1,0 +1,2 @@
+# name	metric	threshold	fuzz	description
+20-b-minimap	RMSE	0.03	-	b minimap crop: both player markers present (STATIC blessed frame)
