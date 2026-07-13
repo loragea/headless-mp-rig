@@ -12,8 +12,11 @@ scenarios/<name>/
   reference-logs/     <checkpoint>.events           # blessed log signatures
 ```
 
-- **`example/`** — a runnable example built on OpenMW's freely-licensed **example-suite** content
-  (no commercial game data required). *(Being authored — it needs live rig runs to capture and bless
-  its references.)*
+- **`example/`** — a runnable two-client example built on OpenMW's freely-licensed **example-suite**
+  content (no commercial game data required): both clients join one world and see each other, proven
+  from a blessed server-log signature + inline log asserts. Run it with `bin/run-example.sh`; see
+  [example/README.md](example/README.md) for what it asserts and the example-suite quirks it works
+  around. (Carries its own `settings.cfg` + `coreScripts-overlay/` compat shim so stock CoreScripts
+  survive on non-Morrowind content.)
 - **`local/`** — gitignored. Put any fixture derived from a commercial game's data (Morrowind saves,
   gameplay screenshots) here; it is game-content, not MIT-covered, and must stay out of a public repo.

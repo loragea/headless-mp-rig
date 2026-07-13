@@ -1,0 +1,281 @@
+{
+  "alliedPlayers": [],
+  "attributes": {
+    "Agility": {
+      "base": 1,
+      "damage": 0,
+      "skillIncrease": 0
+    },
+    "Endurance": {
+      "base": 1,
+      "damage": 0,
+      "skillIncrease": 0
+    },
+    "Intelligence": {
+      "base": 1,
+      "damage": 0,
+      "skillIncrease": 0
+    },
+    "Luck": {
+      "base": 1,
+      "damage": 0,
+      "skillIncrease": 0
+    },
+    "Personality": {
+      "base": 1,
+      "damage": 0,
+      "skillIncrease": 0
+    },
+    "Speed": {
+      "base": 1,
+      "damage": 0,
+      "skillIncrease": 0
+    },
+    "Strength": {
+      "base": 1,
+      "damage": 0,
+      "skillIncrease": 0
+    },
+    "Willpower": {
+      "base": 1,
+      "damage": 0,
+      "skillIncrease": 0
+    }
+  },
+  "books": [],
+  "character": {
+    "birthsign": "",
+    "class": "",
+    "gender": 1,
+    "hair": "",
+    "head": "",
+    "race": "Defaultfolk"
+  },
+  "cooldowns": [],
+  "customClass": [],
+  "customVariables": [],
+  "destinationOverrides": [],
+  "equipment": [],
+  "factionExpulsion": [],
+  "factionRanks": [],
+  "factionReputation": [],
+  "fame": {
+    "bounty": 0,
+    "reputation": 0
+  },
+  "inventory": [],
+  "ipAddresses": [],
+  "journal": [],
+  "location": {
+    "cell": "0, -7",
+    "posX": 4096.0,
+    "posY": -53248.0,
+    "posZ": -1850.0,
+    "regionName": "",
+    "rotX": 0,
+    "rotZ": 1.5708
+  },
+  "login": {
+    "name": "a",
+    "passwordHash": "7517b621802aefeda3150c62d249c14aaa736683018a4918845ada1251bddf04",
+    "passwordSalt": "B0TUXIuRgHMXw35zH9kI1MPcCsjFTaJjWjqnqDPjfCpVobA76Mdv5yE5KQOpW2vV"
+  },
+  "mapExplored": [],
+  "miscellaneous": {
+    "markLocation": {
+      "cell": "",
+      "posX": 0,
+      "posY": 0,
+      "posZ": 0,
+      "rotX": 0,
+      "rotZ": 0
+    },
+    "selectedSpell": ""
+  },
+  "quickKeys": [],
+  "recordLinks": [],
+  "settings": {
+    "bedRestAllowed": "default",
+    "consoleAllowed": "default",
+    "difficulty": "default",
+    "enforcedLogLevel": "default",
+    "physicsFramerate": "default",
+    "staffRank": 0,
+    "waitAllowed": "default",
+    "wildernessRestAllowed": "default"
+  },
+  "shapeshift": [],
+  "skills": {
+    "Acrobatics": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Alchemy": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Alteration": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Armorer": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Athletics": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Axe": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Block": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Bluntweapon": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Conjuration": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Destruction": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Enchant": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Handtohand": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Heavyarmor": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Illusion": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Lightarmor": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Longblade": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Marksman": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Mediumarmor": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Mercantile": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Mysticism": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Restoration": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Security": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Shortblade": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Sneak": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Spear": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Speechcraft": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    },
+    "Unarmored": {
+      "base": 1,
+      "damage": 0,
+      "progress": 0
+    }
+  },
+  "spellbook": [],
+  "spellsActive": {
+    "rig_waterbreathing": [
+      {
+        "displayName": "Rig Water Breathing",
+        "effects": [
+          {
+            "arg": -1,
+            "duration": 100000000,
+            "id": 0,
+            "magnitude": 1,
+            "timeLeft": 100000000
+          }
+        ],
+        "stackingState": false
+      }
+    ]
+  },
+  "stats": {
+    "fatigueBase": 100,
+    "fatigueCurrent": 100,
+    "healthBase": 50,
+    "healthCurrent": 50,
+    "level": 1,
+    "levelProgress": 0,
+    "magickaBase": 50,
+    "magickaCurrent": 50
+  },
+  "timestamps": {
+    "creation": 0,
+    "lastDisconnect": 0,
+    "lastFixMe": 0,
+    "lastLogin": 0,
+    "lastSessionDuration": 0
+  },
+  "topics": []
+}

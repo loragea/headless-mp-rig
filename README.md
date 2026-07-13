@@ -35,6 +35,11 @@ $EDITOR rig.conf
 lib/compare.sh selftest
 lib/logcheck.sh selftest
 
+# run the worked example — two real clients in one world on FREE example-suite content, cross-client
+# sync asserted from the logs (green exit 0 / red non-zero). A full run takes a few minutes on
+# software GL; run it directly (or under your CI's long-job runner). See scenarios/example/README.md.
+bin/run-example.sh
+
 # author + run a targeted feature test (see docs/FEATURE-TESTS.md):
 cp templates/repro-template.sh my-test.sh
 $EDITOR my-test.sh                # fill in the four TODO blocks
@@ -51,8 +56,9 @@ rig.conf.example     copy to rig.conf; sets binary names, build dir, scripts dir
 lib/rig.sh           the rig: boot server+clients, load fixtures, drive input, event-gated waits, capture
 lib/compare.sh       screenshot regression compare (magick, per-image tolerance) — library + CLI + selftest
 lib/logcheck.sh      log event-signature compare (masked, ordered) — library + CLI + selftest
+bin/run-example.sh   the runnable free-content example: 2 clients in one world, cross-client sync from logs
 templates/           starting points: repro-template.sh, explore-client.sh
-scenarios/           worked example fixtures (free example-suite content)
+scenarios/           worked example fixtures + blessed references (free example-suite content)
 docs/                the manuals (below)
 ```
 

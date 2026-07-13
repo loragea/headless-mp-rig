@@ -1,0 +1,6 @@
+[Script]: [example-suite-compat] filled empty clientVariableScopes.globals categories: ignored, personal, quest, kills, factionRanks, factionExpulsion, worldwide, unknown
+- Client was allowed to connect
+Creating new player with guid GUID
+- Client was allowed to connect
+Creating new player with guid GUID
+[Script]: Authority of cell 0, -7 is now a (PID)
