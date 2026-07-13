@@ -32,7 +32,7 @@ if [ -n "${MW_DATA:-}" ]; then
     rig_add_content mw "data=$MW_DATA" "fallback-archive=Morrowind.bsa" \
         ${MW_ARCHIVES:-} "content=Morrowind.esm" ${MW_CONTENT:-}
 else
-    rig_set_required_datafiles builtin.omwscripts
+    rig_set_required_datafiles template.omwgame   # prepends builtin.omwscripts (client entry 0)
     rig_add_content example "data=$EXAMPLE_SUITE" "content=template.omwgame"
 fi
 

@@ -113,9 +113,15 @@ OpenMW's **example-suite** (`git clone --depth 1 https://gitlab.com/OpenMW/examp
 tiny free `template.omwgame`. It's enough for connection/visibility/movement tests:
 
 ```sh
-rig_set_required_datafiles builtin.omwscripts
+rig_set_required_datafiles template.omwgame   # prepends builtin.omwscripts for you (client entry 0)
 rig_add_content example "data=$EXAMPLE_SUITE" "content=template.omwgame"
 ```
+
+`rig_set_required_datafiles` **already prepends `builtin.omwscripts`** (the ≥0.48 client auto-loads
+it as content entry 0), so pass only the real content files — here just `template.omwgame`. Passing
+`builtin.omwscripts` explicitly duplicates it, yielding a server list of `[builtin, builtin]` that the
+client (`[builtin, template.omwgame]`) is index-shift-rejected against ("template.omwgame is past the
+number of plugins used by the server") — disconnect before login.
 
 ### Real game data (e.g. Morrowind)
 
