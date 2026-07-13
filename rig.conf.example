@@ -1,0 +1,37 @@
+# rig.conf.example — copy to rig.conf and edit for your build, then the rig auto-loads it.
+#   cp rig.conf.example rig.conf   &&   $EDITOR rig.conf
+# Every value here is also overridable as an environment variable (RIG_* wins if exported).
+# lib/rig.sh sources ../rig.conf automatically; point elsewhere with RIG_CONF=/path/to/rig.conf.
+
+# --- Your build (REQUIRED) --------------------------------------------------------------------
+# Directory that contains the compiled client + dedicated-server binaries.
+RIG_BUILD=$HOME/your-build
+
+# Binary + config filenames inside RIG_BUILD. Defaults are TES3MP's; set yours if it rebranded
+# (e.g. a fork that renamed the client executable). The server-config file is the *-default.cfg the
+# rig rewrites to point at your server scripts.
+RIG_CLIENT_BIN=tes3mp
+RIG_SERVER_BIN=tes3mp-server
+RIG_SERVER_CFG=tes3mp-server-default.cfg
+
+# Server-side Lua scripts (TES3MP CoreScripts or your fork's). The rig writes the server's
+# `home =` to this and loads scenario state under its data/ dir.
+RIG_CORESCRIPTS=$HOME/CoreScripts
+
+# --- Headless environment ---------------------------------------------------------------------
+# One Xvfb display per client (see docs/WRITING-SCENARIOS.md "one display per client"). The window
+# geometry math (centre 640,360) assumes the 1280x720 screen — change both together if you must.
+RIG_DISPLAY=:99
+RIG_DISPLAY2=:100
+RIG_DISPLAY3=:101
+RIG_SCREEN=1280x720x24
+
+# OPTIONAL: a Release-built MyGUI shared lib to LD_PRELOAD-shadow a broken distro MyGUI that renders
+# no UI (Debian's libmyguiengine3debian1, built without CMAKE_BUILD_TYPE — see docs/WRITING-SCENARIOS.md
+# "invisible UI"). Leave unset if your distro's MyGUI renders correctly.
+# RIG_MYGUI_FIXED=$HOME/mygui-fixed-lib
+
+# --- Timeouts (raise on slow / software-GL boxes; these are caps, the happy path is event-gated) --
+RIG_WORLD_LOAD=35        # blind world-load fallback (software GL is slow — don't shrink casually)
+RIG_BOOT_CAP=75          # max secs to see the client boot milestone before proceeding
+RIG_WIGGLE_INTERVAL=20   # idle-wiggler period; MUST stay < the engine's 30s fVanityDelay

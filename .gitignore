@@ -1,0 +1,14 @@
+# Local per-user config (copied from rig.conf.example)
+rig.conf
+
+# Rig scratch / run artifacts
+/tmp/
+*.log
+run-*/
+shots/
+review/
+
+# Non-redistributable, game-data-derived fixtures a user imports locally (see docs). The free
+# example-suite scenario under scenarios/ IS committed; anything you author from commercial data
+# should be kept out of a public repo — drop it under scenarios/local/ which is ignored here.
+scenarios/local/
