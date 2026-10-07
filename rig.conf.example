@@ -1,42 +1,99 @@
 # rig.conf.example — copy to rig.conf and edit for your build, then the rig auto-loads it.
-#   cp rig.conf.example rig.conf   &&   $EDITOR rig.conf
-# Every value here is also overridable as an environment variable: a variable already set when the
-# rig is sourced wins over the same key here.
+#   cp rig.conf.example rig.conf   &&   $EDITOR rig.conf   &&   bin/rig doctor
+# Every key is listed here; commented-out keys show their default. The file is sourced by bash, so quote
+# values with spaces. A variable already set in the environment when the rig is sourced wins over the
+# same key here (e.g. `RIG_BUILD=/other/build bin/run-example.sh`).
 # lib/rig.sh sources ../rig.conf automatically; point elsewhere with RIG_CONF=/path/to/rig.conf.
+# `bin/rig doctor` checks every key below and names the key in each problem it reports.
 
 # --- Your build (REQUIRED) --------------------------------------------------------------------
-# Directory that contains the compiled client + dedicated-server binaries.
+# Directory that contains the compiled client + dedicated-server binaries and the client's local
+# openmw.cfg. The rig only reads this directory.
 RIG_BUILD=$HOME/your-build
 
-# Binary + config filenames inside RIG_BUILD. Defaults are TES3MP's; set yours if it rebranded
-# (e.g. a fork that renamed the client executable). The server-config file is the *-default.cfg the
-# rig rewrites to point at your server scripts.
+# Binary + config filenames inside RIG_BUILD. Defaults are TES3MP's; set yours if it rebranded.
+# RIG_SERVER_CFG is the server's default config next to its binary; the rig never edits it — each run
+# gets its own tes3mp-server.cfg (server home + master announce) through the server's XDG_CONFIG_HOME.
 RIG_CLIENT_BIN=tes3mp
 RIG_SERVER_BIN=tes3mp-server
 RIG_SERVER_CFG=tes3mp-server-default.cfg
 
-# Server-side Lua scripts (TES3MP CoreScripts or your fork's). The rig writes the server's
-# `home =` to this and loads scenario state under its data/ dir.
+# Server-side Lua scripts (TES3MP CoreScripts or your fork's). Runs that build a work copy
+# (rig_corescripts_overlay) only read this clone; server state and test hooks go into the copy.
 RIG_CORESCRIPTS=$HOME/CoreScripts
 
-# Master-server announce. The rig turns it OFF in the server config every run (there is no master in
-# a test env, and announcing makes shutdown block ~10s on the deregister). Set 1 to leave it as is.
+# Master-server announce. Each run's server config turns it OFF (there is no master in a test env, and
+# announcing makes shutdown block ~10s on the deregister). Set 1 to leave the build's setting.
 # RIG_MASTER_ANNOUNCE=0
+
+# 0.47-era clients do not auto-load builtin.omwscripts; set 0 so requiredDataFiles.json does not list it.
+# RIG_RDF_BUILTIN=1
+
+# --- Content profiles -------------------------------------------------------------------------
+# One profile per content set on this machine; a test selects one by name (rig_use_content <name>).
+#   RIG_CONTENT_<name>_DATA      data directory (required)
+#   RIG_CONTENT_<name>_ARCHIVES  .bsa files under DATA, loaded as fallback-archive= (optional)
+#   RIG_CONTENT_<name>_FILES     content files under DATA, in load order (required)
+# See docs/WRITING-SCENARIOS.md §4.
+# Free OpenMW example-suite (git clone --depth 1 https://gitlab.com/OpenMW/example-suite); the worked
+# example (bin/run-example.sh) needs this profile.
+RIG_CONTENT_example_DATA=$HOME/example-suite/game_template/data
+RIG_CONTENT_example_FILES="template.omwgame"
+# Morrowind with both expansions, if you own it (commercial data — keep tests built on it out of a
+# public repo; scenarios/local/ is gitignored for that).
+# RIG_CONTENT_mw_DATA="$HOME/morrowind/Data Files"
+# RIG_CONTENT_mw_ARCHIVES="Morrowind.bsa Tribunal.bsa Bloodmoon.bsa"
+# RIG_CONTENT_mw_FILES="Morrowind.esm Tribunal.esm Bloodmoon.esm"
+
+# Where the client content block is written. profile (default): into each client's isolated profile
+# openmw.cfg; the build's openmw.cfg must then carry no content= lines. build: between '# RIG-CONTENT'
+# markers in $RIG_BUILD/openmw.cfg, stripped at cleanup — only for a client that reads no user
+# openmw.cfg; a killed run leaves the block behind.
+# RIG_CONTENT_TARGET=profile
+
+# --- Runs -------------------------------------------------------------------------------------
+# Parent of the per-run directories (rig_run_dir): server log + run-scoped server config, the
+# CoreScripts work copy, client logs, shots/, review/. Default: runs/ in this repo (gitignored).
+# RIG_RUNS=$HOME/headless-mp-rig/runs
+# 1 = keep the CoreScripts work copy in the run dir after the run (post-mortem); default removes it.
+# RIG_KEEP_WORK=0
 
 # --- Headless environment ---------------------------------------------------------------------
 # One Xvfb display per client (see docs/WRITING-SCENARIOS.md "one display per client"). The window
-# geometry math (centre 640,360) assumes the 1280x720 screen — change both together if you must.
+# geometry math (centre 640,360) and every click/crop coordinate assume the 1280x720 screen; doctor
+# refuses another size unless RIG_GEOM_UNCHECKED=1.
 RIG_DISPLAY=:99
 RIG_DISPLAY2=:100
 RIG_DISPLAY3=:101
 RIG_SCREEN=1280x720x24
+# RIG_GEOM_UNCHECKED=0
 
-# OPTIONAL: a Release-built MyGUI shared lib to LD_PRELOAD-shadow a broken distro MyGUI that renders
-# no UI (Debian's libmyguiengine3debian1, built without CMAKE_BUILD_TYPE — see docs/WRITING-SCENARIOS.md
-# "invisible UI"). Leave unset if your distro's MyGUI renders correctly.
-# RIG_MYGUI_FIXED=$HOME/mygui-fixed-lib
+# Isolated client profiles (XDG_CONFIG_HOME/XDG_DATA_HOME per client), wiped at each client start.
+# RIG_PROFILE=/tmp/mp-rig-profile
+# RIG_PROFILE2=/tmp/mp-rig-profile2
+# RIG_PROFILE3=/tmp/mp-rig-profile3
+# Optional settings.cfg copied into every fresh profile (model remaps etc.).
+# RIG_SETTINGS_SRC=
+# Default capture() output dir when a test does not pass one.
+# RIG_SHOTDIR=/tmp/mp-rig-shots
+
+# OPTIONAL: a Release-built MyGUI shared lib dir to LD_LIBRARY_PATH-shadow a broken distro MyGUI that
+# renders no UI (Debian's libmyguiengine3debian1, built without CMAKE_BUILD_TYPE — see
+# docs/WRITING-SCENARIOS.md "invisible UI"). Empty = use the distro MyGUI; never auto-detected.
+# RIG_MYGUI_FIXED=
 
 # --- Timeouts (raise on slow / software-GL boxes; these are caps, the happy path is event-gated) --
 RIG_WORLD_LOAD=35        # blind world-load fallback (software GL is slow — don't shrink casually)
 RIG_BOOT_CAP=75          # max secs to see the client boot milestone before proceeding
 RIG_WIGGLE_INTERVAL=20   # idle-wiggler period; MUST stay < the engine's 30s fVanityDelay
+# RIG_SERVER_LOAD=3      # secs to let the server bind its port
+# RIG_BOOT_SETTLE=6      # settle after the boot milestone (milestone -> name box drawn)
+# RIG_CHARGEN_PWBOX=4    # secs for the "create password" box after the name
+# RIG_CHARGEN_DLG=5      # secs for each chargen dialog to render
+
+# --- Reference binding (normally set per scenario by the test, not here) -------------------------
+# Older consumers export these before sourcing lib/compare.sh / lib/logcheck.sh; new tests call
+# compare_set_refs / logcheck_set_refs instead. Review dirs default to <run dir>/review.
+# RIG_REF_DIR=   RIG_REF_MANIFEST=   RIG_REVIEW_DIR=
+# RIG_LOG_REF_DIR=   RIG_LOG_REVIEW_DIR=   RIG_LOG_MARKERS=
+# RIG_DEFAULT_METRIC=RMSE   RIG_DEFAULT_THRESHOLD=0.05   RIG_DEFAULT_FUZZ=-

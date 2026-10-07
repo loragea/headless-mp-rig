@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# rig — command-line front end of headless-mp-rig.
+#
+# Usage:
+#   bin/rig doctor     validate rig.conf and the host; every problem names the rig.conf key (or the
+#                      package) to fix. Exit 0 = a run can start, 1 = something must be fixed.
+#   bin/rig help       this text
+#
+# Config: lib/rig.sh loads ../rig.conf (or $RIG_CONF); a variable set in the environment wins over the
+# same key in the file, e.g. `RIG_BUILD=/other/build bin/rig doctor`.
+set -uo pipefail
+DIR=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+# shellcheck source=../lib/rig.sh
+source "$DIR/../lib/rig.sh"
+
+usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; }
+
+case "${1:-help}" in
+    doctor)         shift; rig_doctor "$@"; exit $? ;;
+    help|-h|--help) usage; exit 0 ;;
+    *)              echo "rig: unknown command '$1'" >&2; usage >&2; exit 2 ;;
+esac

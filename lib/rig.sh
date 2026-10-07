@@ -758,3 +758,142 @@ rig_click() { DISPLAY="$1" xdotool mousemove "$2" "$3"; sleep 0.3; DISPLAY="$1" 
 # Right-click — OpenMW's A_Inventory is the RIGHT mouse button (not a key), so this opens/closes the
 # inventory/map/stats menu. rig_rmb <display>
 rig_rmb()   { DISPLAY="$1" xdotool click 3; sleep 0.3; }
+
+# ---- rig_doctor — validate rig.conf and the host before a run -----------------------------------------
+# Prints one line per check: `ok   ...`, `warn <KEY>: ...` or `FAIL <KEY>: ...`. Every FAIL and warn names
+# the rig.conf key (or the package) to fix, so the message alone says what to edit. Returns 0 when a run
+# can start (warnings allowed), 1 if any check failed. Reads only; never writes outside RIG_RUNS.
+RIG_KNOWN_KEYS="RIG_BUILD RIG_CLIENT_BIN RIG_SERVER_BIN RIG_SERVER_CFG RIG_CORESCRIPTS RIG_MASTER_ANNOUNCE
+RIG_MYGUI_FIXED RIG_RUNS RIG_CONTENT_TARGET RIG_KEEP_WORK RIG_DISPLAY RIG_DISPLAY2 RIG_DISPLAY3 RIG_SCREEN
+RIG_GEOM_UNCHECKED RIG_PROFILE RIG_PROFILE2 RIG_PROFILE3 RIG_SETTINGS_SRC RIG_SHOTDIR RIG_SERVER_LOAD
+RIG_WORLD_LOAD RIG_BOOT_CAP RIG_BOOT_SETTLE RIG_CHARGEN_PWBOX RIG_CHARGEN_DLG RIG_WIGGLE_INTERVAL
+RIG_RDF_BUILTIN RIG_ROOT RIG_REF_DIR RIG_REF_MANIFEST RIG_REVIEW_DIR RIG_LOG_REF_DIR RIG_LOG_REVIEW_DIR
+RIG_LOG_MARKERS RIG_DEFAULT_METRIC RIG_DEFAULT_THRESHOLD RIG_DEFAULT_FUZZ RIG_CONTENT_SOFT EXAMPLE_SUITE"
+rig_doctor() {
+    local fails=0 conf k v n d f prof cfg seen=' '
+    _rd_ok()   { echo "ok   $*"; }
+    _rd_warn() { echo "warn $*"; }
+    _rd_fail() { echo "FAIL $*"; fails=$((fails+1)); }
+
+    # -- the config file itself --
+    conf=${RIG_CONF:-$_RIG_LIB_DIR/../rig.conf}
+    if [ -f "$conf" ]; then
+        _rd_ok "config: $(readlink -f "$conf")"
+        while IFS= read -r k; do
+            case " $(echo $RIG_KNOWN_KEYS) " in *" $k "*) continue;; esac
+            [[ $k =~ ^RIG_CONTENT_.+_(DATA|ARCHIVES|FILES)$ ]] && continue
+            if [[ $k =~ ^RIG_CONTENT_ ]]; then _rd_fail "$k: not a content-profile key (use RIG_CONTENT_<name>_DATA / _ARCHIVES / _FILES)"
+            else _rd_warn "$k: unknown key in $conf (typo?)"; fi
+        done < <(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/p' "$conf" | sort -u)
+    else
+        _rd_warn "RIG_CONF: no config file at $conf (cp rig.conf.example rig.conf, or set RIG_CONF) — using defaults/environment"
+    fi
+
+    # -- the build --
+    if [ ! -d "$RIG_BUILD" ]; then
+        _rd_fail "RIG_BUILD: no such directory: $RIG_BUILD (set RIG_BUILD to the dir holding your client + server binaries)"
+    else
+        _rd_ok "RIG_BUILD: $RIG_BUILD"
+        if [ -x "$RIG_BUILD/$RIG_CLIENT_BIN" ]; then _rd_ok "RIG_CLIENT_BIN: $RIG_CLIENT_BIN"
+        else _rd_fail "RIG_CLIENT_BIN: no executable $RIG_CLIENT_BIN in RIG_BUILD ($RIG_BUILD)"; fi
+        if [ -x "$RIG_BUILD/$RIG_SERVER_BIN" ]; then _rd_ok "RIG_SERVER_BIN: $RIG_SERVER_BIN"
+        else _rd_fail "RIG_SERVER_BIN: no executable $RIG_SERVER_BIN in RIG_BUILD ($RIG_BUILD)"; fi
+        if [ -f "$RIG_BUILD/$RIG_SERVER_CFG" ]; then _rd_ok "RIG_SERVER_CFG: $RIG_SERVER_CFG (read only; the run's overrides go to a run-scoped tes3mp-server.cfg)"
+        else _rd_fail "RIG_SERVER_CFG: no $RIG_SERVER_CFG in RIG_BUILD ($RIG_BUILD) — the server needs its default config next to the binary"; fi
+        cfg=$RIG_BUILD/openmw.cfg
+        if [ ! -f "$cfg" ]; then
+            _rd_fail "RIG_BUILD: no openmw.cfg in $RIG_BUILD (the client's local config)"
+        else
+            if grep -q '^# RIG-CONTENT BEGIN' "$cfg"; then
+                if [ "$RIG_CONTENT_TARGET" = build ]; then _rd_warn "RIG_CONTENT_TARGET: leftover rig content block in $cfg (rig_cleanup strips it at the end of the next run)"
+                else _rd_fail "RIG_BUILD: $cfg has a leftover '# RIG-CONTENT' block from an older rig — delete the lines from '# RIG-CONTENT BEGIN' to '# RIG-CONTENT END'"; fi
+            elif grep -q '^[[:space:]]*content[[:space:]]*=' "$cfg"; then
+                _rd_fail "RIG_BUILD: $cfg has its own content= lines; they load before the rig's per-profile content and shift the plugin list the server checks — remove them (or set RIG_CONTENT_TARGET=build)"
+            else
+                _rd_ok "RIG_BUILD: openmw.cfg has no content= lines (the rig's per-profile content block applies)"
+            fi
+            if ! grep -q '^[[:space:]]*config[[:space:]]*=' "$cfg"; then
+                _rd_warn "RIG_CONTENT_TARGET: $cfg has no config= line (pre-0.48 layout); the user openmw.cfg is still read by 0.47-era clients — if your client ignores it, set RIG_CONTENT_TARGET=build"
+            fi
+        fi
+    fi
+    case $RIG_CONTENT_TARGET in
+        profile|build) _rd_ok "RIG_CONTENT_TARGET: $RIG_CONTENT_TARGET" ;;
+        *) _rd_fail "RIG_CONTENT_TARGET: '$RIG_CONTENT_TARGET' is not profile or build" ;;
+    esac
+
+    # -- server scripts --
+    if [ -d "$RIG_CORESCRIPTS/scripts" ]; then _rd_ok "RIG_CORESCRIPTS: $RIG_CORESCRIPTS (only read when a run builds a work copy with rig_corescripts_overlay)"
+    else _rd_fail "RIG_CORESCRIPTS: no scripts/ in $RIG_CORESCRIPTS (clone TES3MP CoreScripts or your fork's and point RIG_CORESCRIPTS at it)"; fi
+    case $RIG_MASTER_ANNOUNCE in 0|1) ;; *) _rd_fail "RIG_MASTER_ANNOUNCE: '$RIG_MASTER_ANNOUNCE' is not 0 or 1";; esac
+    case ${RIG_RDF_BUILTIN:-1} in 0|1) ;; *) _rd_fail "RIG_RDF_BUILTIN: '$RIG_RDF_BUILTIN' is not 0 or 1";; esac
+
+    # -- run directory --
+    if mkdir -p "$RIG_RUNS" 2>/dev/null && [ -w "$RIG_RUNS" ]; then _rd_ok "RIG_RUNS: $RIG_RUNS"
+    else _rd_fail "RIG_RUNS: cannot create or write $RIG_RUNS"; fi
+
+    # -- MyGUI shadow (never auto-detected) --
+    if [ -z "$RIG_MYGUI_FIXED" ]; then _rd_ok "RIG_MYGUI_FIXED: none (distro MyGUI used)"
+    elif [ -d "$RIG_MYGUI_FIXED" ]; then _rd_ok "RIG_MYGUI_FIXED: MyGUI shadow $RIG_MYGUI_FIXED"
+    else _rd_fail "RIG_MYGUI_FIXED: no such directory: $RIG_MYGUI_FIXED (leave it empty to use the distro MyGUI)"; fi
+
+    # -- displays and screen geometry --
+    for k in RIG_DISPLAY RIG_DISPLAY2 RIG_DISPLAY3; do
+        v=${!k}
+        if ! [[ $v =~ ^:[0-9]+$ ]]; then _rd_fail "$k: '$v' is not a display like :99"; continue; fi
+        case $seen in *" $v "*) _rd_fail "$k: $v is used by another RIG_DISPLAY* key (each client needs its own display)"; continue;; esac
+        seen="$seen$v "
+        if [ -e "/tmp/.X${v#:}-lock" ]; then
+            if pgrep -x Xvfb >/dev/null 2>&1; then _rd_warn "$k: display $v is in use (lock /tmp/.X${v#:}-lock; rig_require_clean kills Xvfb before a run)"
+            else _rd_warn "$k: display $v has a stale lock /tmp/.X${v#:}-lock (rig_require_clean clears it)"; fi
+        fi
+    done
+    [ -n "$(echo "$seen" | tr -d ' ')" ] && _rd_ok "displays:${seen% }"
+    if [ "$RIG_SCREEN" = 1280x720x24 ]; then _rd_ok "RIG_SCREEN: $RIG_SCREEN"
+    elif [ "${RIG_GEOM_UNCHECKED:-0}" = 1 ]; then _rd_warn "RIG_SCREEN: $RIG_SCREEN — click/crop coordinates assume 1280x720x24 (RIG_GEOM_UNCHECKED=1)"
+    else _rd_fail "RIG_SCREEN: $RIG_SCREEN — the rig's window-centre and click coordinates assume 1280x720x24 (set RIG_GEOM_UNCHECKED=1 to override)"; fi
+
+    # -- numbers --
+    for k in RIG_SERVER_LOAD RIG_WORLD_LOAD RIG_BOOT_CAP RIG_BOOT_SETTLE RIG_CHARGEN_PWBOX RIG_CHARGEN_DLG RIG_WIGGLE_INTERVAL; do
+        [[ ${!k} =~ ^[0-9]+([.][0-9]+)?$ ]] || _rd_fail "$k: '${!k}' is not a number of seconds"
+    done
+    if [[ $RIG_WIGGLE_INTERVAL =~ ^[0-9]+$ ]] && [ "$RIG_WIGGLE_INTERVAL" -ge 30 ]; then
+        _rd_fail "RIG_WIGGLE_INTERVAL: $RIG_WIGGLE_INTERVAL must stay below the engine's 30s vanity delay"
+    fi
+    if [ -n "$RIG_SETTINGS_SRC" ] && [ ! -f "$RIG_SETTINGS_SRC" ]; then _rd_fail "RIG_SETTINGS_SRC: no such file: $RIG_SETTINGS_SRC"; fi
+
+    # -- content profiles --
+    local -a profs=()
+    while IFS= read -r k; do
+        [[ $k =~ ^RIG_CONTENT_(.+)_(DATA|ARCHIVES|FILES)$ ]] || continue
+        prof=${BASH_REMATCH[1]}
+        case " ${profs[*]+"${profs[*]}"} " in *" $prof "*) ;; *) profs+=("$prof");; esac
+    done < <(compgen -v RIG_CONTENT_ | sort)
+    if [ -n "${EXAMPLE_SUITE:-}" ] && [ -z "${RIG_CONTENT_example_DATA:-}" ]; then
+        _rd_warn "EXAMPLE_SUITE: older key — set RIG_CONTENT_example_DATA and RIG_CONTENT_example_FILES=template.omwgame instead"
+        case " ${profs[*]+"${profs[*]}"} " in *" example "*) ;; *) profs+=(example);; esac
+    fi
+    [ "${#profs[@]}" -gt 0 ] || _rd_warn "RIG_CONTENT_<name>_DATA: no content profile configured (the example needs RIG_CONTENT_example_*)"
+    for prof in "${profs[@]+"${profs[@]}"}"; do
+        if f=$(rig_content_check "$prof"); then _rd_ok "content profile $prof: $(_rig_content_get "$prof" FILES) in $(_rig_content_get "$prof" DATA)"
+        else while IFS= read -r v; do _rd_fail "$v"; done <<<"$f"; fi
+    done
+
+    # -- host tools --
+    for k in "Xvfb:xvfb" "xdotool:xdotool" "import:imagemagick" "magick:imagemagick (version 7 provides magick)" \
+             "python3:python3" "tar:tar" "pgrep:procps" "pkill:procps"; do
+        if command -v "${k%%:*}" >/dev/null 2>&1; then _rd_ok "tool ${k%%:*}"
+        else _rd_fail "${k%%:*}: not installed (package: ${k#*:})"; fi
+    done
+    command -v unzip >/dev/null 2>&1 || _rd_warn "unzip: not installed (package: unzip) — needed only by rig_import_fixture for .zip saves"
+    if ! find /usr/lib /lib -maxdepth 4 -type d -name 'osgPlugins-*' 2>/dev/null | grep -q .; then
+        _rd_warn "osgPlugins: no osgPlugins-* dir under /usr/lib or /lib — OpenMW 0.49+ clients abort without the OSG plugins"
+    fi
+    if pgrep -x "$RIG_SERVER_BIN" >/dev/null 2>&1; then
+        _rd_warn "RIG_SERVER_BIN: a $RIG_SERVER_BIN is running now — rig_require_clean will refuse to start (pkill -x $RIG_SERVER_BIN)"
+    fi
+
+    if [ "$fails" -gt 0 ]; then echo "doctor: $fails problem(s) — fix the keys named above"; return 1; fi
+    echo "doctor: ready"
+    return 0
+}

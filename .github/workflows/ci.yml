@@ -19,7 +19,7 @@ jobs:
           apt-get install -y --no-install-recommends ca-certificates git shellcheck imagemagick
       - uses: actions/checkout@v4
       - name: Shell lint
-        run: shellcheck -S warning lib/*.sh bin/*.sh templates/*.sh
+        run: shellcheck -S warning lib/*.sh bin/*.sh bin/rig templates/*.sh
       - name: Selftest lib/compare.sh
         run: lib/compare.sh selftest
       - name: Selftest lib/logcheck.sh

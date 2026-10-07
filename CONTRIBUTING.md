@@ -8,7 +8,7 @@ short and keep the rig general.
 Needs `bash`, `shellcheck` and ImageMagick 7 (the `magick` command). No game binary or game data.
 
 ```sh
-shellcheck -S warning lib/*.sh bin/*.sh templates/*.sh
+shellcheck -S warning lib/*.sh bin/*.sh bin/rig templates/*.sh
 lib/compare.sh selftest
 lib/logcheck.sh selftest
 ```
