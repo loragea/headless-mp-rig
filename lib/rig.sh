@@ -35,6 +35,7 @@ _rig_load_conf() {
     while IFS= read -r key; do
         [ -n "${!key+x}" ] && keep+=("$key=${!key}")
     done < <(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/p' "$conf")
+    # shellcheck source=/dev/null  # the user's rig.conf, located at run time
     source "$conf"
     for key in "${keep[@]+"${keep[@]}"}"; do printf -v "${key%%=*}" '%s' "${key#*=}"; done
 }
@@ -66,7 +67,7 @@ RIG_CHARGEN_PWBOX=${RIG_CHARGEN_PWBOX:-4}                     # secs for the "cr
 RIG_CHARGEN_DLG=${RIG_CHARGEN_DLG:-5}                         # secs for each chargen dialog to render (llvmpipe)
 RIG_WIGGLE_INTERVAL=${RIG_WIGGLE_INTERVAL:-20}               # idle-wiggler period (s); MUST be < fVanityDelay (30s)
 
-RIG_XVFB= RIG_XVFB2= RIG_XVFB3= RIG_SRV= RIG_CLI= RIG_CLI2= RIG_CLI3= RIG_WIGGLER=
+RIG_XVFB='' RIG_XVFB2='' RIG_XVFB3='' RIG_SRV='' RIG_CLI='' RIG_CLI2='' RIG_CLI3='' RIG_WIGGLER=''
 
 rig_die()  { echo "rig: $*" >&2; exit 1; }
 rig_note() { echo ">>> rig: $*" >&2; }
@@ -177,7 +178,7 @@ rig_load_scenario() {
     local fix=$1 d=$RIG_CORESCRIPTS/data sub
     [ -d "$fix" ] || rig_die "no scenario fixture at $fix"
     for sub in $RIG_STATE_SUBDIRS; do
-        rm -rf "$d/$sub"
+        rm -rf "${d:?}/$sub"
         [ -d "$fix/$sub" ] && cp -a "$fix/$sub" "$d/$sub"
     done
 }
@@ -196,7 +197,7 @@ rig_import_fixture() {
     [ -n "$src" ] && [ -d "$src/player" ] || rig_die "rig_import_fixture: no player/ in $1 (point at a server data/ dir or its .zip)"
     mkdir -p "$dest"
     for sub in $RIG_STATE_SUBDIRS; do
-        rm -rf "$dest/$sub"
+        rm -rf "${dest:?}/$sub"
         [ -d "$src/$sub" ] && cp -a "$src/$sub" "$dest/$sub"
     done
     [ -n "$tmp" ] && rm -rf "$tmp"
@@ -209,7 +210,7 @@ rig_import_fixture() {
 # alone. No arg (operates on the CoreScripts data dir).
 rig_clear_state() {
     local d=$RIG_CORESCRIPTS/data sub
-    for sub in $RIG_STATE_SUBDIRS; do rm -rf "$d/$sub"; mkdir -p "$d/$sub"; done
+    for sub in $RIG_STATE_SUBDIRS; do rm -rf "${d:?}/$sub"; mkdir -p "$d/$sub"; done
     rig_note "cleared live server state ($d: $RIG_STATE_SUBDIRS emptied)"
 }
 
