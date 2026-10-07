@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# lib-compare.sh — screenshot regression comparison for the MP scenario gate (TESTING.md Layer 2).
+# compare.sh — screenshot regression comparison for headless MP scenario runs.
 #
 # WHY this shape: in-world captures are never byte-identical run to run (animation pose, water/
 # particle motion, sub-pixel camera jitter, capture timing). So we DON'T do exact-pixel diffs — we
 # compare each capture to a known-good reference with `magick compare -metric` and a *tolerance*.
 # This library is POLICY-NEUTRAL: `compare_shot` returns 0 (within tolerance) / 1 (over) / 2 (error);
-# the CALLER decides severity. The scenario gate treats "over tolerance" as a CI-red REGRESSION —
-# fix the bug, or deliberately re-bless the new capture (see `promote_shot` / scenario.sh --update-refs)
+# the CALLER decides severity. A scenario runner typically treats "over tolerance" as a REGRESSION —
+# fix the bug, or deliberately re-bless the new capture (`promote_shot`, or `compare.sh promote`)
 # if the change is intended (graphics or actor-AI behaviour do change upstream sometimes).
 #
 # Tolerance is PER IMAGE, read from reference-images/manifest.tsv, because a crisp menu wants a tight
 # check while a windy exterior wants a loose one. One metric never fits both — the manifest owns the
 # metric+threshold choice; this file just executes it.
 #
-# Use as a library:   source lib-compare.sh ;  compare_shot <name> <candidate.png>
-# Use as a CLI:       lib-compare.sh compare <name> <candidate.png>
-#                     lib-compare.sh promote <name> <candidate.png>
-#                     lib-compare.sh selftest          # proves the compare/tolerance/diff logic
+# Use as a library:   source lib/compare.sh ;  compare_shot <name> <candidate.png>
+# Use as a CLI:       lib/compare.sh compare <name> <candidate.png>
+#                     lib/compare.sh promote <name> <candidate.png>
+#                     lib/compare.sh selftest          # proves the compare/tolerance/diff logic
 set -uo pipefail
 
 _LC_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
@@ -60,7 +60,7 @@ _extract_value() {
 
 # compare_shot <name> <candidate.png>
 #   0 = within tolerance (PASS).  1 = over tolerance / missing ref / size mismatch (caller's call —
-#   the scenario gate treats it as a REGRESSION).  2 = hard error.
+#   usually a REGRESSION).  2 = hard error.
 compare_shot() {
     local name=$1 cand=$2
     _have_magick || { echo "ERROR: ImageMagick 'magick' not found" >&2; return 2; }
@@ -105,7 +105,7 @@ promote_shot() {
     [ -f "$cand" ] || { echo "ERROR: candidate missing ($cand)" >&2; return 2; }
     mkdir -p "$REF_DIR"
     cp "$cand" "$REF_DIR/$name.png"
-    echo "PROMOTED $name -> $REF_DIR/$name.png  (record the OpenMW base/checkpoint in manifest + commit)"
+    echo "PROMOTED $name -> $REF_DIR/$name.png  (note the build it was captured on in the manifest, then commit)"
 }
 
 # selftest — synthetic, deterministic; proves identical->PASS, small change within tol->PASS,
@@ -145,6 +145,6 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
         compare) shift; compare_shot "$@" ;;
         promote) shift; promote_shot "$@" ;;
         selftest) selftest ;;
-        *) echo "usage: lib-compare.sh {compare <name> <png> | promote <name> <png> | selftest}" >&2; exit 2 ;;
+        *) echo "usage: compare.sh {compare <name> <png> | promote <name> <png> | selftest}" >&2; exit 2 ;;
     esac
 fi

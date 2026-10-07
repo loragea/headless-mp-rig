@@ -140,16 +140,15 @@ rig_set_server_home() {
 # with an index-shifted mismatch ("X is past the number of plugins used by the server", then disconnect
 # BEFORE login — so the player never reaches the world and every in-world log-assert silently fails).
 #
-# builtin.omwscripts: the 0.48 client AUTO-LOADS builtin.omwscripts as content **entry 0** (the engine
-# ships it in resources/vfs and injects it ahead of the .esm list), so the server's required list must
-# put {"builtin.omwscripts": []} FIRST — we prepend it here unconditionally. (At the 0.47 checkpoint the
-# client did NOT load it, so it had to be ABSENT; that flipped at 0.48 — verified by a real Morrowind
-# login 2026-06-27: without the prepend the client is rejected with "Bloodmoon.esm is past the number of
-# plugins used by the server"; with it, login + chargen + cell-authority all succeed.) $@ = the .esm/.esp
-# content filenames in the SAME order as the client's content= lines (builtin is added for you).
-# RIG_RDF_BUILTIN=0 omits the prepend — required when driving a 0.47-era client (e.g. the archived
-# baseline-audit build), which does NOT auto-load builtin.omwscripts and is index-shift-rejected by a
-# list that leads with it. Default 1 (the ≥0.48 behaviour) is unchanged.
+# builtin.omwscripts: an OpenMW 0.48+ client AUTO-LOADS builtin.omwscripts as content **entry 0** (the
+# engine ships it in resources/vfs and injects it ahead of the .esm list), so the server's required list
+# must put {"builtin.omwscripts": []} FIRST — it is prepended here unconditionally. Without it a 0.48+
+# client is rejected with "<last plugin> is past the number of plugins used by the server"; with it,
+# login + chargen + cell authority succeed. $@ = the .esm/.esp content filenames in the SAME order as
+# the client's content= lines (builtin is added for you).
+# RIG_RDF_BUILTIN=0 omits the prepend — required when driving an OpenMW 0.47-based client, which does
+# NOT auto-load builtin.omwscripts and is index-shift-rejected by a list that leads with it.
+# Default 1 (the 0.48+ behaviour).
 rig_set_required_datafiles() {
     local rdf=$RIG_CORESCRIPTS/data/requiredDataFiles.json f entries='' sep=''
     if [ "${RIG_RDF_BUILTIN:-1}" = 1 ]; then
@@ -170,7 +169,7 @@ RIG_STATE_SUBDIRS="player cell world map recordstore custom"
 
 # Load an authored save-state scenario into the server's CoreScripts data dir, so RETURNING players
 # resume into a hand-built situation instead of driving chargen. $1 = a scenario dir holding the
-# server data subtree (the 6 RIG_STATE_SUBDIRS, as produced by playing in the release package).
+# server data subtree (the 6 RIG_STATE_SUBDIRS, as produced by playing a session on a server).
 # Restored fresh each run (playing mutates it), so runs are deterministic — and the rm -rf below means
 # loading a fixture CLEARS whatever the previous run left (stale players/cells don't leak). Leaves
 # server config files (banlist etc.) alone — only the stateful subdirs are replaced.
@@ -183,8 +182,8 @@ rig_load_scenario() {
     done
 }
 
-# IMPORT a freshly-authored server state into a scenario fixture (the user→agent state handoff, see
-# docs/SCENARIO-WORKFLOW.md §4). Copies ONLY the 6 stateful subdirs, REPLACING the fixture's (so a
+# IMPORT a freshly-authored server state into a scenario fixture (the human→script state handoff, see
+# docs/WRITING-SCENARIOS.md §2a). Copies ONLY the 6 stateful subdirs, REPLACING the fixture's (so a
 # re-import cleanly clears stale state — e.g. players removed in the new authoring vanish). Accepts a
 # server data/ dir OR a .zip of one (data.zip): a zip is unpacked to a temp dir and the dir holding
 # player/ is found automatically. $1 = source data dir or .zip; $2 = destination fixture dir.
@@ -215,10 +214,10 @@ rig_clear_state() {
 }
 
 # Set the client's openmw.cfg game-content block (data=/fallback-archive=/content= lines). REPLACES any
-# prior block rather than appending, so runs don't accumulate stale content (e.g. a smoke run's
-# example-suite leaking into a Morrowind run). NOTE for Morrowind: you MUST pass the BSA archives
-# as `fallback-archive=` lines (OpenMW does not auto-load .bsa from a data dir) or the client boots with
-# no textures/meshes/GUI and dies. $1 = a label (for the block comment); $2... = the cfg lines to set.
+# prior block rather than appending, so runs don't accumulate stale content (e.g. an earlier run's
+# example-suite block leaking into a run on other content). NOTE for content that ships BSA archives:
+# you MUST pass them as `fallback-archive=` lines (OpenMW does not auto-load .bsa from a data dir) or
+# the client boots with no textures/meshes/GUI and dies. $1 = a label (for the block comment); $2... = the cfg lines to set.
 rig_add_content() {
     local label=$1; shift
     local cfg=$RIG_BUILD/openmw.cfg

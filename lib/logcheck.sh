@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# lib-logcheck.sh — compare a run's LOGS (client + server) to known-good signatures. Sibling to
-# lib-compare.sh (screenshots): same REVIEW-not-fail flow, same --update-refs blessing.
+# logcheck.sh — compare a run's LOGS (client + server) to known-good signatures. Sibling to
+# compare.sh (screenshots): same REVIEW-not-fail flow, same explicit promote-to-bless step.
 #
 # WHY a "signature", not a diff: logs are noisy (timestamps, IP:port, hex addresses, generated
 # refnums, pids), so a byte-diff always fails. We extract a normalized EVENT SIGNATURE — the ordered
 # sequence of *significant* events (packet IDs, CoreScripts callbacks, connection/spawn/state lines)
 # with volatile tokens masked — and diff THAT. A missing / extra / reordered event is exactly the
-# class that bit the first attempt: a DedicatedPlayer spawn that didn't fire ("players can't see each
+# regression class that matters in MP sync: a DedicatedPlayer spawn that didn't fire ("players can't see each
 # other"), a movement/anim packet that went missing ("animations don't work"), a sync callback that
 # stopped being called. The raw timestamped log is kept as an artifact — cross-reference its
 # timestamps with the screenshot capture times (captures.tsv) when investigating a flagged run.
 #
-# Library:  source lib-logcheck.sh ; check_log <name> <rawlog>
-# CLI:      lib-logcheck.sh check <name> <rawlog> | promote <name> <rawlog> | sig <rawlog> | selftest
+# Library:  source lib/logcheck.sh ; check_log <name> <rawlog>
+# CLI:      lib/logcheck.sh check <name> <rawlog> | promote <name> <rawlog> | sig <rawlog> | selftest
 set -uo pipefail
 
 _LL_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
@@ -22,22 +22,21 @@ LOG_REVIEW_DIR=${RIG_LOG_REVIEW_DIR:-/tmp/mp-rig-log-review}
 # A line is SIGNIFICANT (kept in the signature) if it matches this vocabulary; everything else is
 # dropped as noise. Extend via RIG_LOG_MARKERS for a specific run.
 #
-# Deliberately NARROW — a live 2-client Morrowind run is inherently non-deterministic (ambient cell
-# loading of neighbour cells, weather ticks, the P1/P2 connect-order race), so a broad "every ID_*/
-# every On* callback" vocabulary drifts ~20 lines every run and the check would REVIEW every time. We
-# keep only the events that (a) validate a checkpoint and (b) fire deterministically, plus the error
-# tripwires that must stay ABSENT:
+# Deliberately NARROW — a live multi-client run is inherently non-deterministic (ambient loading of
+# neighbour cells, weather ticks, the order in which clients finish connecting), so a broad "every
+# ID_*/every On* callback" vocabulary drifts ~20 lines every run and the check would REVIEW every
+# time. The default keeps only events that (a) validate a checkpoint and (b) fire deterministically,
+# plus the error tripwires that must stay ABSENT:
 #   - connection gating + player/DedicatedPlayer creation (the mutual-visibility spawn)
 #   - OnPlayerEndCharGen (chargen completed)
-#   - the playtest hook's own anchors (co-located / drain / drop — fire exactly once each)
-#   - the client-side drain-sync packet ID_PLAYER_SPELLS_ACTIVE (fresh chars have no other active
-#     spells, so this fires exactly once per client — for our /drain — and stays clean)
-#   - error signatures we never want to see
+#   - the active-spells sync packet ID_PLAYER_SPELLS_ACTIVE (deterministic when fresh characters
+#     receive a known number of effects; drop it via RIG_LOG_MARKERS if your scenario's effects vary)
+#   - error signatures that must never appear
 # Intentionally EXCLUDED as noise: OnObjectSpawn/OnContainer/OnActorList/OnCellLoad/OnWorldWeather/
 # OnPlayerCellChange, the "DedicatedPlayer ... moved to <cell>" position stream, and Received
-# ID_OBJECT_PLACE (it also fires for ambient cell objects, which drift; the /drop is anchored instead
-# by the server's deterministic "[playtest] dropped ..." line plus the 50-drop-p1 screenshot).
-LOG_MARKERS=${RIG_LOG_MARKERS:-'(allowed|not allowed) to connect|has (connected|disconnected)|Creating new (player|DedicatedPlayer)|Called "OnPlayerEndCharGen"|\[playtest\]|ID_PLAYER_SPELLS_ACTIVE|Error in frame|script error|Server crash|Cannot get class|RefId is not a string'}
+# ID_OBJECT_PLACE (it also fires for ambient cell objects, which drift). For a scenario-specific
+# action, have your server script log one deterministic line and add it to RIG_LOG_MARKERS.
+LOG_MARKERS=${RIG_LOG_MARKERS:-'(allowed|not allowed) to connect|has (connected|disconnected)|Creating new (player|DedicatedPlayer)|Called "OnPlayerEndCharGen"|ID_PLAYER_SPELLS_ACTIVE|Error in frame|script error|Server crash|Cannot get class|RefId is not a string'}
 
 # Mask volatile tokens so two runs of the same scripted sequence yield identical signatures. Kept
 # CONSERVATIVE on purpose (we do NOT mask all bare numbers — slot indices, effect args like arg=3,
@@ -87,7 +86,7 @@ promote_log() {
     mkdir -p "$LOG_REF_DIR"
     _log_signature "$raw" > "$LOG_REF_DIR/$name.events"
     cp "$raw" "$LOG_REF_DIR/$name.sample.log" 2>/dev/null || true
-    echo "PROMOTED $name -> $LOG_REF_DIR/$name.events (record the OpenMW base/checkpoint + commit)"
+    echo "PROMOTED $name -> $LOG_REF_DIR/$name.events (note the build it was captured on, then commit)"
 }
 
 # selftest — synthetic logs prove: identical->PASS, same events but different timestamps/IPs/
@@ -97,7 +96,7 @@ selftest() {
     t=$(mktemp -d)
     LOG_REF_DIR=$t LOG_REVIEW_DIR=$t/review
     # Self-contained marker vocabulary covering the events used below, so the test validates the
-    # signature/normalization logic independently of the default (project-specific) markers.
+    # signature/normalization logic independently of the default markers.
     LOG_MARKERS='is incoming|allowed to connect|Creating new (player|DedicatedPlayer)|Called "OnPlayer|ID_PLAYER_BASEINFO'
     # Full [YYYY-MM-DD HH:MM:SS] timestamps so _log_normalize strips them (it targets that format).
     cat > "$t/ref.log" <<'EOF'
@@ -136,6 +135,6 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
         promote) shift; promote_log "$@" ;;
         sig)     shift; _log_signature "$1" ;;
         selftest) selftest ;;
-        *) echo "usage: lib-logcheck.sh {check <name> <log> | promote <name> <log> | sig <log> | selftest}" >&2; exit 2 ;;
+        *) echo "usage: logcheck.sh {check <name> <log> | promote <name> <log> | sig <log> | selftest}" >&2; exit 2 ;;
     esac
 fi
