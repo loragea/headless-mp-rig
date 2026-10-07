@@ -249,4 +249,5 @@ scenario** — isolate it:
 - **Suppress vanity for the whole run** (§5) — it is the usual cause of "camera non-determinism".
 - **Interior light sources flicker by design** in some games (Morrowind), which makes full-frame
   perceptual-hash screenshots bimodal — prefer stable-lighting venues for full-frame STABLE shots, or
-  crop the shot to the GUI element it actually asserts (see VERIFICATION and COOKBOOK KB-19).
+  crop the shot to the GUI element it actually asserts (see VERIFICATION and
+  [KB-19-phash-bimodal-crop-gui-rmse](cookbook/KB-19-phash-bimodal-crop-gui-rmse.md)).

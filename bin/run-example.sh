@@ -44,7 +44,8 @@ source "$REPO/lib/compare.sh"
 trap rig_cleanup EXIT
 
 # cshot <display> <name> <crop-geom> — capture a display, crop to a region, echo the cropped PNG path.
-# Used for the STATIC blessed frame: crop to a stable GUI region (the KB-19 / VERIFICATION convention).
+# Used for the STATIC blessed frame: crop to a stable GUI region (see docs/VERIFICATION.md and
+# cookbook recipe KB-19-phash-bimodal-crop-gui-rmse).
 cshot() { local d=$1 n=$2 geom=$3; local out=$RIG_SHOTDIR/$n.png
           mkdir -p "$RIG_SHOTDIR"
           DISPLAY="$d" import -window root "$out" 2>/dev/null
@@ -91,7 +92,7 @@ sleep "$RIG_WORLD_LOAD"          # llvmpipe world load -> name box on both
 #   * a DYNAMIC pair on a's display — one frame BEFORE b logs in, one AFTER; they MUST differ (b's
 #     avatar appears in a's view). The gate is "motion present", robust to run-to-run non-determinism.
 #   * a STATIC blessed frame on b's display — b's minimap cropped to a stable region; it must MATCH a
-#     blessed reference within tolerance (crop-to-stable-GUI-region, the KB-19 convention).
+#     blessed reference within tolerance (crop to a stable GUI region, KB-19-phash-bimodal-crop-gui-rmse).
 rig_note "returning-login a (:99) first for cell authority..."
 rig_login "$RIG_DISPLAY"  a a 0 "$CLILOG_A"
 rig_start_idle_wiggler                                          # suppress the vanity camera on both displays

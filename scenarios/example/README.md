@@ -47,8 +47,8 @@ The example also exercises **both screenshot verification modes** (`docs/VERIFIC
 - **STATIC blessed frame (must MATCH).** On client `b`'s display, `b`'s minimap is cropped to a stable
   region (`20-b-minimap` — showing both player markers) and compared to a blessed reference within a
   per-image tolerance (`reference-images/manifest.tsv`: `RMSE ≤ 0.03`, measured ~0.008–0.012). Cropping
-  to a **stable GUI region** is the KB-19 convention: the full 3D frame (animating water, a T-posed
-  avatar) is too variable to bless, but the minimap crop is not. Re-bless with
+  to a **stable GUI region** follows cookbook recipe `KB-19-phash-bimodal-crop-gui-rmse`: the full 3D
+  frame (animating water, a T-posed avatar) is too variable to bless, but the minimap crop is not. Re-bless with
   `UPDATE_REFS=1 bin/run-example.sh` (rewrites `reference-images/20-b-minimap.png`).
 
 Adjust the minimap crop for a different resolution via `CROP_MINIMAP` (default `88x84+950+576`, for the

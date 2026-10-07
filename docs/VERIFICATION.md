@@ -92,7 +92,8 @@ a windy exterior.
   PHASH is unstable on dark/sparse crops and on frames with a flickering light source** (a continuous
   brightness ramp crosses hash-bit boundaries discontinuously → bimodal scores). **Convention: GUI
   crops get RMSE; full 3D frames get PHASH** — and if a full-frame interior flickers, either move to a
-  stable-lighting venue or crop the shot to the GUI element it actually asserts (COOKBOOK KB-19).
+  stable-lighting venue or crop the shot to the GUI element it actually asserts
+  ([KB-19-phash-bimodal-crop-gui-rmse](cookbook/KB-19-phash-bimodal-crop-gui-rmse.md)).
 - **`-fuzz`** — treats colours within a percentage as equal before counting; use sparingly for
   antialiasing noise. Default off.
 - **Differential motion (DYNAMIC):** `magick compare -metric RMSE t0.png t1.png null:` → the value in
@@ -124,8 +125,9 @@ big-change→REVIEW (+ a diff image written). No game data or binaries needed.
 - **`captures.tsv`** (the rig writes a wall-clock line per shot) lets you align a flagged screenshot
   with raw log timestamps when diagnosing — keep the raw server log alongside the shots.
 - **Timed transient:** for a sub-second effect, don't try to time the shot — **ring-record** frames
-  around the event and keep the extreme one (COOKBOOK KB-14). For a simpler case, fire the observer's
-  capture in the background partway into the actor's action.
+  around the event and keep the extreme one
+  ([KB-16-ring-record-transient-visuals](cookbook/KB-16-ring-record-transient-visuals.md)). For a
+  simpler case, fire the observer's capture in the background partway into the actor's action.
 
 ---
 
