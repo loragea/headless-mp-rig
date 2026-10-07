@@ -1,0 +1,4 @@
+# Let shellcheck follow `source` lines into the sibling libraries (resolved from each script's
+# own directory), so a consumer script is checked against the functions it actually sources.
+external-sources=true
+source-path=SCRIPTDIR

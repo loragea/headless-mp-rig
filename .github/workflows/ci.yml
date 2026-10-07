@@ -1,0 +1,26 @@
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  lint-and-selftest:
+    runs-on: ubuntu-latest
+    # The compare library calls ImageMagick 7's `magick` CLI. Ubuntu runners ship ImageMagick 6
+    # (no `magick`); Debian 13 ships 7, so the job runs in a Debian 13 container.
+    container: debian:trixie-slim
+    steps:
+      - name: Install tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git shellcheck imagemagick
+      - uses: actions/checkout@v4
+      - name: Shell lint
+        run: shellcheck -S warning lib/*.sh bin/*.sh templates/*.sh
+      - name: Selftest lib/compare.sh
+        run: lib/compare.sh selftest
+      - name: Selftest lib/logcheck.sh
+        run: lib/logcheck.sh selftest
