@@ -78,6 +78,12 @@ docs/                the manuals (below)
   melee damage-sync**, **summon lifecycle + caster identity**, **magic-effect identity sync**, and
   **player→player effect sync** — each with its vehicle and its load-bearing assertions.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules and how to add a capability or recipe.
+CI runs shell lint plus the `lib/compare.sh` and `lib/logcheck.sh` selftests; none of it needs a game
+binary.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Example scenarios use OpenMW's freely-licensed example-suite content.
