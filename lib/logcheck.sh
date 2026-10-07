@@ -11,13 +11,18 @@
 # stopped being called. The raw timestamped log is kept as an artifact — cross-reference its
 # timestamps with the screenshot capture times (captures.tsv) when investigating a flagged run.
 #
-# Library:  source lib/logcheck.sh ; check_log <name> <rawlog>
-# CLI:      lib/logcheck.sh check <name> <rawlog> | promote <name> <rawlog> | sig <rawlog> | selftest
+# Library:  source lib/logcheck.sh ; logcheck_set_refs <refdir> ; check_log <name> <rawlog>
+# CLI:      RIG_LOG_REF_DIR=<refdir> lib/logcheck.sh check <name> <rawlog> | promote <name> <rawlog> | sig <rawlog> | selftest
 set -uo pipefail
 
-_LL_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
-LOG_REF_DIR=${RIG_LOG_REF_DIR:-$_LL_DIR/reference-logs}
-LOG_REVIEW_DIR=${RIG_LOG_REVIEW_DIR:-/tmp/mp-rig-log-review}
+# Where the blessed signatures live and where review output goes. Bind them per scenario AFTER sourcing
+# with logcheck_set_refs (below); the RIG_* environment values are read once at source time for older
+# consumers that export them first.
+#   LOG_REF_DIR     blessed <name>.events files — no default: check_log / promote_log refuse until set.
+#   LOG_REVIEW_DIR  candidate signatures and diffs; default $RIG_RUN_DIR/review when a run dir exists
+#                   (rig_run_dir), else ${TMPDIR:-/tmp}/mp-rig-log-review. Resolved at check time.
+LOG_REF_DIR=${RIG_LOG_REF_DIR:-}
+LOG_REVIEW_DIR=${RIG_LOG_REVIEW_DIR:-}
 
 # A line is SIGNIFICANT (kept in the signature) if it matches this vocabulary; everything else is
 # dropped as noise. Extend via RIG_LOG_MARKERS for a specific run.
@@ -37,6 +42,21 @@ LOG_REVIEW_DIR=${RIG_LOG_REVIEW_DIR:-/tmp/mp-rig-log-review}
 # ID_OBJECT_PLACE (it also fires for ambient cell objects, which drift). For a scenario-specific
 # action, have your server script log one deterministic line and add it to RIG_LOG_MARKERS.
 LOG_MARKERS=${RIG_LOG_MARKERS:-'(allowed|not allowed) to connect|has (connected|disconnected)|Creating new (player|DedicatedPlayer)|Called "OnPlayerEndCharGen"|ID_PLAYER_SPELLS_ACTIVE|Error in frame|script error|Server crash|Cannot get class|RefId is not a string'}
+
+# logcheck_set_refs <refdir> [reviewdir] [markers] — bind this scenario's signature set, and optionally
+# its review dir and marker vocabulary (empty = keep the current value / the defaults above).
+logcheck_set_refs() {
+    LOG_REF_DIR=${1:?logcheck_set_refs: need a reference dir}
+    LOG_REVIEW_DIR=${2:-}
+    [ -n "${3:-}" ] && LOG_MARKERS=$3
+    return 0
+}
+_lc_review() {
+    if [ -n "$LOG_REVIEW_DIR" ]; then printf '%s' "$LOG_REVIEW_DIR"
+    elif [ -n "${RIG_RUN_DIR:-}" ]; then printf '%s' "$RIG_RUN_DIR/review"
+    else printf '%s' "${TMPDIR:-/tmp}/mp-rig-log-review"; fi
+}
+_lc_need_ref() { [ -n "$LOG_REF_DIR" ] || { echo "ERROR: no reference dir — call logcheck_set_refs <refdir> (or export RIG_LOG_REF_DIR before sourcing logcheck.sh)" >&2; return 2; }; }
 
 # Mask volatile tokens so two runs of the same scripted sequence yield identical signatures. Kept
 # CONSERVATIVE on purpose (we do NOT mask all bare numbers — slot indices, effect args like arg=3,
@@ -60,21 +80,22 @@ _log_signature() { grep -hE "$LOG_MARKERS" "$1" 2>/dev/null | _log_normalize; }
 # check_log <name> <rawlog>
 #   0 = signature matches (PASS). 1 = differs / no reference (REVIEW). 2 = hard error.
 check_log() {
-    local name=$1 raw=$2
+    local name=$1 raw=$2 review
+    _lc_need_ref || return 2
     [ -f "$raw" ] || { echo "ERROR $name: raw log missing ($raw)" >&2; return 2; }
-    mkdir -p "$LOG_REVIEW_DIR"
-    local ref=$LOG_REF_DIR/$name.events cand=$LOG_REVIEW_DIR/$name.events
+    review=$(_lc_review); mkdir -p "$review"
+    local ref=$LOG_REF_DIR/$name.events cand=$review/$name.events
     _log_signature "$raw" > "$cand"
     if [ ! -f "$ref" ]; then
         echo "REVIEW $name: no reference log yet — captured signature $cand ($(wc -l <"$cand") events; promote to bless)"
         return 1
     fi
-    if diff -u "$ref" "$cand" > "$LOG_REVIEW_DIR/$name.logdiff" 2>&1; then
-        rm -f "$LOG_REVIEW_DIR/$name.logdiff"
+    if diff -u "$ref" "$cand" > "$review/$name.logdiff" 2>&1; then
+        rm -f "$review/$name.logdiff"
         echo "PASS   $name: log signature matches ($(wc -l <"$cand") events)"
         return 0
     fi
-    echo "REVIEW $name: log signature differs — diff $LOG_REVIEW_DIR/$name.logdiff"
+    echo "REVIEW $name: log signature differs — diff $review/$name.logdiff"
     return 1
 }
 
@@ -82,6 +103,7 @@ check_log() {
 # the raw sample for reference, so an investigator has a full known-good log to compare against.
 promote_log() {
     local name=$1 raw=$2
+    _lc_need_ref || return 2
     [ -f "$raw" ] || { echo "ERROR: raw log missing ($raw)" >&2; return 2; }
     mkdir -p "$LOG_REF_DIR"
     _log_signature "$raw" > "$LOG_REF_DIR/$name.events"
@@ -94,10 +116,9 @@ promote_log() {
 selftest() {
     local t fails=0
     t=$(mktemp -d)
-    LOG_REF_DIR=$t LOG_REVIEW_DIR=$t/review
     # Self-contained marker vocabulary covering the events used below, so the test validates the
     # signature/normalization logic independently of the default markers.
-    LOG_MARKERS='is incoming|allowed to connect|Creating new (player|DedicatedPlayer)|Called "OnPlayer|ID_PLAYER_BASEINFO'
+    logcheck_set_refs "$t" "$t/review" 'is incoming|allowed to connect|Creating new (player|DedicatedPlayer)|Called "OnPlayer|ID_PLAYER_BASEINFO'
     # Full [YYYY-MM-DD HH:MM:SS] timestamps so _log_normalize strips them (it targets that format).
     cat > "$t/ref.log" <<'EOF'
 [2026-01-01 10:00:01] [INFO]: A connection is incoming from 127.0.0.1|54321
@@ -126,6 +147,9 @@ EOF
     _ck "identical            -> PASS"   0 "$t/ref.log"
     _ck "volatile-only diff   -> PASS"   0 "$t/same.log"
     _ck "missing event        -> REVIEW" 1 "$t/missing.log"
+    local saved=$LOG_REF_DIR; LOG_REF_DIR=''
+    _ck "no ref dir           -> ERROR"  2 "$t/ref.log"
+    LOG_REF_DIR=$saved
     echo "selftest done (fails=$fails)"; rm -rf "$t"; return "$fails"
 }
 

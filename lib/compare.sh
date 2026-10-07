@@ -13,16 +13,37 @@
 # check while a windy exterior wants a loose one. One metric never fits both — the manifest owns the
 # metric+threshold choice; this file just executes it.
 #
-# Use as a library:   source lib/compare.sh ;  compare_shot <name> <candidate.png>
-# Use as a CLI:       lib/compare.sh compare <name> <candidate.png>
+# Use as a library:   source lib/compare.sh ; compare_set_refs <refdir> ; compare_shot <name> <candidate.png>
+# Use as a CLI:       RIG_REF_DIR=<refdir> lib/compare.sh compare <name> <candidate.png>
 #                     lib/compare.sh promote <name> <candidate.png>
 #                     lib/compare.sh selftest          # proves the compare/tolerance/diff logic
 set -uo pipefail
 
-_LC_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
-REF_DIR=${RIG_REF_DIR:-$_LC_DIR/reference-images}
-MANIFEST=${RIG_REF_MANIFEST:-$REF_DIR/manifest.tsv}
-REVIEW_DIR=${RIG_REVIEW_DIR:-/tmp/mp-rig-shot-review}
+# Where the blessed references live and where review output goes. Bind them per scenario AFTER
+# sourcing with compare_set_refs (below); the RIG_* environment values are read once at source time
+# for older consumers that export them first.
+#   REF_DIR     blessed PNGs — no default: compare_shot / promote_shot refuse until it is set.
+#   MANIFEST    per-image metric + threshold table; default $REF_DIR/manifest.tsv.
+#   REVIEW_DIR  diff images and first captures; default $RIG_RUN_DIR/review when a run dir exists
+#               (rig_run_dir), else ${TMPDIR:-/tmp}/mp-rig-shot-review. Resolved at compare time.
+REF_DIR=${RIG_REF_DIR:-}
+MANIFEST=${RIG_REF_MANIFEST:-}
+REVIEW_DIR=${RIG_REVIEW_DIR:-}
+
+# compare_set_refs <refdir> [manifest] [reviewdir] — bind this scenario's reference set (and optionally
+# its manifest and review dir; empty = the defaults above).
+compare_set_refs() {
+    REF_DIR=${1:?compare_set_refs: need a reference dir}
+    MANIFEST=${2:-}
+    REVIEW_DIR=${3:-}
+}
+_cmp_manifest() { printf '%s' "${MANIFEST:-${REF_DIR:+$REF_DIR/manifest.tsv}}"; }
+_cmp_review() {
+    if [ -n "$REVIEW_DIR" ]; then printf '%s' "$REVIEW_DIR"
+    elif [ -n "${RIG_RUN_DIR:-}" ]; then printf '%s' "$RIG_RUN_DIR/review"
+    else printf '%s' "${TMPDIR:-/tmp}/mp-rig-shot-review"; fi
+}
+_cmp_need_ref() { [ -n "$REF_DIR" ] || { echo "ERROR: no reference dir — call compare_set_refs <refdir> (or export RIG_REF_DIR before sourcing compare.sh)" >&2; return 2; }; }
 
 # Default metric+threshold for any capture NOT listed in the manifest (so an unknown new capture is
 # still reviewable rather than crashing). RMSE normalized, fairly loose — tune per-image in manifest.
@@ -35,9 +56,9 @@ _have_magick() { command -v magick >/dev/null 2>&1; }
 # Look up a capture's metric/threshold/fuzz from the manifest. Echoes "METRIC<TAB>THRESHOLD<TAB>FUZZ".
 # Manifest columns (tab-separated): name  metric  threshold  fuzz  description   (# comments / blanks ignored)
 manifest_lookup() {
-    local name=$1 line
-    if [ -f "$MANIFEST" ]; then
-        line=$(awk -F'\t' -v n="$name" '$1==n {print; exit}' "$MANIFEST")
+    local name=$1 line manifest; manifest=$(_cmp_manifest)
+    if [ -n "$manifest" ] && [ -f "$manifest" ]; then
+        line=$(awk -F'\t' -v n="$name" '$1==n {print; exit}' "$manifest")
         if [ -n "$line" ]; then
             awk -F'\t' '{printf "%s\t%s\t%s", $2, $3, ($4==""?"-":$4)}' <<<"$line"
             return 0
@@ -62,23 +83,25 @@ _extract_value() {
 #   0 = within tolerance (PASS).  1 = over tolerance / missing ref / size mismatch (caller's call —
 #   usually a REGRESSION).  2 = hard error.
 compare_shot() {
-    local name=$1 cand=$2
+    local name=$1 cand=$2 review
     _have_magick || { echo "ERROR: ImageMagick 'magick' not found" >&2; return 2; }
+    _cmp_need_ref || return 2
     [ -f "$cand" ] || { echo "ERROR $name: candidate missing ($cand)" >&2; return 2; }
+    review=$(_cmp_review)
 
     local mt metric threshold fuzz
     mt=$(manifest_lookup "$name")
     metric=$(cut -f1 <<<"$mt"); threshold=$(cut -f2 <<<"$mt"); fuzz=$(cut -f3 <<<"$mt")
 
     local ref=$REF_DIR/$name.png
-    mkdir -p "$REVIEW_DIR"
+    mkdir -p "$review"
     if [ ! -f "$ref" ]; then
-        cp "$cand" "$REVIEW_DIR/$name.new.png"
-        echo "REVIEW $name: no reference yet — captured $REVIEW_DIR/$name.new.png (promote to bless it)"
+        cp "$cand" "$review/$name.new.png"
+        echo "REVIEW $name: no reference yet — captured $review/$name.new.png (promote to bless it)"
         return 1
     fi
 
-    local diff=$REVIEW_DIR/$name.diff.png raw value rc=0
+    local diff=$review/$name.diff.png raw value rc=0
     local -a fuzzarg=(); [ "$fuzz" != "-" ] && fuzzarg=(-fuzz "$fuzz")
     raw=$(magick compare -metric "$metric" "${fuzzarg[@]}" "$ref" "$cand" "$diff" 2>&1) || rc=$?
     if [ "$rc" -ge 2 ]; then
@@ -102,6 +125,7 @@ compare_shot() {
 # human-approved end of the "flag for reference update" flow; never call it unattended.
 promote_shot() {
     local name=$1 cand=$2
+    _cmp_need_ref || return 2
     [ -f "$cand" ] || { echo "ERROR: candidate missing ($cand)" >&2; return 2; }
     mkdir -p "$REF_DIR"
     cp "$cand" "$REF_DIR/$name.png"
@@ -115,7 +139,7 @@ selftest() {
     local t fails=0
     t=$(mktemp -d)
     # Point the comparator's dirs at the temp sandbox (compare_shot reads these globals).
-    REF_DIR=$t; MANIFEST=$t/manifest.tsv; REVIEW_DIR=$t/review
+    compare_set_refs "$t" "$t/manifest.tsv" "$t/review"
     magick -size 320x240 plasma:fractal "$t/scene.png"                                # the reference
     cp "$t/scene.png" "$t/identical.png"
     magick "$t/scene.png" -fill black -draw 'rectangle 0,0 3,3' "$t/tiny.png"          # ~16px: capture jitter
@@ -131,6 +155,9 @@ selftest() {
     _st "identical  -> PASS"    0 "$t/identical.png"
     _st "tiny change-> PASS"    0 "$t/tiny.png"
     _st "big change -> REVIEW"  1 "$t/big.png"
+    local saved=$REF_DIR; REF_DIR=''
+    _st "no ref dir -> ERROR"   2 "$t/identical.png"
+    REF_DIR=$saved
     if [ -f "$t/review/scene.diff.png" ]; then echo "  ok   [diff image written on REVIEW]"
     else echo "  FAIL [no diff image written]"; fails=$((fails+1)); fi
 

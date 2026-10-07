@@ -12,3 +12,6 @@ review/
 # example-suite scenario under scenarios/ IS committed; anything you author from commercial data
 # should be kept out of a public repo — drop it under scenarios/local/ which is ignored here.
 scenarios/local/
+
+# Per-run directories (rig_run_dir; RIG_RUNS default)
+runs/

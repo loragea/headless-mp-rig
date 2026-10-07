@@ -48,6 +48,8 @@ RIG_SERVER_CFG=${RIG_SERVER_CFG:-tes3mp-server-default.cfg}  # server default-co
 RIG_CORESCRIPTS=${RIG_CORESCRIPTS:-$RIG_ROOT/CoreScripts}    # server-side Lua scripts (TES3MP CoreScripts or a fork)
 RIG_MASTER_ANNOUNCE=${RIG_MASTER_ANNOUNCE:-0}                # 1 = leave master-server announce as the cfg has it
 RIG_MYGUI_FIXED=${RIG_MYGUI_FIXED:-$HOME/mygui-fixed-lib}    # Release MyGUI under the Debian soname
+RIG_RUNS=${RIG_RUNS:-$RIG_ROOT/runs}                         # parent of the per-run directories (rig_run_dir)
+RIG_KEEP_WORK=${RIG_KEEP_WORK:-0}                            # 1 = keep the CoreScripts work copy after the run
 RIG_DISPLAY=${RIG_DISPLAY:-:99}                              # client 1's display (single-client repros use this)
 RIG_DISPLAY2=${RIG_DISPLAY2:-:100}                           # client 2's display (2-player runs)
 RIG_DISPLAY3=${RIG_DISPLAY3:-:101}                           # client 3's display (3-player scenarios)
@@ -68,6 +70,8 @@ RIG_CHARGEN_DLG=${RIG_CHARGEN_DLG:-5}                         # secs for each ch
 RIG_WIGGLE_INTERVAL=${RIG_WIGGLE_INTERVAL:-20}               # idle-wiggler period (s); MUST be < fVanityDelay (30s)
 
 RIG_XVFB='' RIG_XVFB2='' RIG_XVFB3='' RIG_SRV='' RIG_CLI='' RIG_CLI2='' RIG_CLI3='' RIG_WIGGLER=''
+# Per-run state (set by rig_run_dir / rig_corescripts_overlay).
+RIG_RUN_DIR=${RIG_RUN_DIR:-} RIG_CORESCRIPTS_WORK=''
 
 rig_die()  { echo "rig: $*" >&2; exit 1; }
 rig_note() { echo ">>> rig: $*" >&2; }
@@ -89,6 +93,10 @@ rig_cleanup() {
     # the client. (a known engine issue.)
     [ -n "${RIG_BUILD:-}" ] && [ -f "$RIG_BUILD/openmw.cfg" ] \
         && sed -i '/^# RIG-CONTENT BEGIN/,/^# RIG-CONTENT END/d' "$RIG_BUILD/openmw.cfg" 2>/dev/null || true
+    # Drop the CoreScripts work copy (it is a throwaway copy; RIG_KEEP_WORK=1 keeps it for a post-mortem).
+    if [ -n "$RIG_CORESCRIPTS_WORK" ] && [ "$RIG_KEEP_WORK" != 1 ] && [ -f "$RIG_CORESCRIPTS_WORK/.rig-workcopy" ]; then
+        rm -rf "${RIG_CORESCRIPTS_WORK:?}"
+    fi
 }
 
 # Refuse to run against a stale server (it would silently serve old config); clear stale Xvfb on either
@@ -118,6 +126,104 @@ rig_check_prereqs() {
     command -v Xvfb    >/dev/null || rig_die "Xvfb not installed"
     command -v xdotool >/dev/null || rig_die "xdotool not installed"
     command -v import  >/dev/null || rig_die "ImageMagick 'import' not installed"
+}
+
+# Force a clean slate between back-to-back rig sessions: a prior session's EXIT-trap kill is ASYNC (the
+# server/clients can still be tearing down RakNet + GL state), so without this the next session's
+# rig_require_clean refuses ("server already running") or boots into a contended, degraded state. Kills
+# every rig process by exact name, drops the X locks of our displays, waits up to 15s for them to die,
+# then settles 4s. Broad on purpose (same rationale as rig_require_clean): the rig is the sole runner of
+# these binaries and of Xvfb on this box.
+rig_clean_slate() {
+    pkill -x "${RIG_SERVER_BIN}" 2>/dev/null; pkill -x "${RIG_CLIENT_BIN}" 2>/dev/null; pkill -x Xvfb 2>/dev/null
+    rm -f "/tmp/.X${RIG_DISPLAY#:}-lock" "/tmp/.X${RIG_DISPLAY2#:}-lock" "/tmp/.X${RIG_DISPLAY3#:}-lock" 2>/dev/null
+    local w=0
+    while { pgrep -x "${RIG_SERVER_BIN}" >/dev/null 2>&1 || pgrep -x "${RIG_CLIENT_BIN}" >/dev/null 2>&1 \
+            || pgrep -x Xvfb >/dev/null 2>&1; } && [ "$w" -lt 15 ]; do sleep 1; w=$((w+1)); done
+    sleep 4
+}
+_rig_clean_slate() { rig_clean_slate "$@"; }    # older name, kept for existing consumers
+
+# rig_run_dir [name] — create this run's directory $RIG_RUNS/<YYYYmmdd-HHMMSS>-<name>/ and set
+# RIG_RUN_DIR to it (also echoed). Idempotent within one shell: if RIG_RUN_DIR already names an existing
+# directory it is reused, so call it directly (not in $(...), which would lose the variable). Not
+# exported: a child rig session creates its own run dir. Layout written by the library so far:
+#   server.log            the server's captured stdout (rig_start_server; server-2.log on a restart)
+#   server/config/openmw/ the run-scoped tes3mp-server.cfg (+ the server's own timestamped log)
+#   server/data/          the server's XDG_DATA_HOME
+#   corescripts/          the CoreScripts work copy, when the consumer builds it here (removed at
+#                         cleanup unless RIG_KEEP_WORK=1)
+# Consumers put their client logs, shots/ and review/ next to these.
+rig_run_dir() {
+    local name=${1:-run} base dir n=1
+    if [ -n "$RIG_RUN_DIR" ] && [ -d "$RIG_RUN_DIR" ]; then echo "$RIG_RUN_DIR"; return 0; fi
+    name=${name//[^A-Za-z0-9._-]/_}
+    mkdir -p "$RIG_RUNS" 2>/dev/null || rig_die "RIG_RUNS: cannot create $RIG_RUNS (set RIG_RUNS in rig.conf to a writable dir)"
+    base=$RIG_RUNS/$(date +%Y%m%d-%H%M%S)-$name; dir=$base
+    while [ -e "$dir" ]; do n=$((n+1)); dir=$base-$n; done
+    mkdir -p "$dir" || rig_die "RIG_RUNS: cannot create $dir"
+    RIG_RUN_DIR=$(cd "$dir" && pwd)
+    echo "$RIG_RUN_DIR"
+}
+
+# rig_corescripts_overlay <workdir> [overlay-dir]...
+#   Build a throwaway CoreScripts work copy at <workdir> from $RIG_CORESCRIPTS and point RIG_CORESCRIPTS
+#   at it for the rest of the run, so the server's state, requiredDataFiles.json and any test hooks are
+#   written there and the user's clone is only read.
+#   * copies every top-level entry except data/ and .git (scripts/, lib/, docs ...);
+#   * creates data/ with the six empty state subdirs ($RIG_STATE_SUBDIRS), and copies banlist.json
+#     (or writes []) and requiredDataFiles.json from the source;
+#   * layers the rig's own overlay/ (the server bridge), then each overlay-dir in order: every file is
+#     copied over the work copy at the same relative path, except files named <file>.append, whose
+#     lines are appended to <file> after ALL overlays are copied (lines already present are skipped).
+#     So scripts/customScripts.lua.append holding `require("custom/my-hook")` loads a hook without
+#     replacing the user's customScripts.lua, and still applies when a later overlay replaces it.
+#   <workdir> is removed first if it holds an earlier work copy (marker file .rig-workcopy); any other
+#   existing non-empty dir is refused. rig_cleanup removes the work copy unless RIG_KEEP_WORK=1.
+#   Calling it again in the same run rebuilds from the original source, not from the work copy.
+rig_corescripts_overlay() {
+    local work=${1:?rig_corescripts_overlay: need a workdir} src ov e f rel tgt line sub
+    shift
+    src=${RIG_CORESCRIPTS_SRC:-$RIG_CORESCRIPTS}
+    [ -d "$src/scripts" ] || rig_die "RIG_CORESCRIPTS: no scripts/ in $src (point RIG_CORESCRIPTS at a CoreScripts clone)"
+    for ov in "$@"; do [ -d "$ov" ] || rig_die "rig_corescripts_overlay: overlay dir $ov does not exist"; done
+    if [ -e "$work" ]; then
+        if [ -f "$work/.rig-workcopy" ]; then rm -rf "${work:?}"
+        elif [ -n "$(ls -A "$work" 2>/dev/null)" ]; then rig_die "rig_corescripts_overlay: $work exists and is not a rig work copy — refusing to overwrite"
+        fi
+    fi
+    case "$(readlink -f "$work")/" in "$(readlink -f "$src")"/*) rig_die "rig_corescripts_overlay: workdir $work is inside RIG_CORESCRIPTS ($src)";; esac
+    mkdir -p "$work/data" || rig_die "rig_corescripts_overlay: cannot create $work"
+    : > "$work/.rig-workcopy"
+    for e in "$src"/* "$src"/.[!.]*; do
+        [ -e "$e" ] || continue
+        case "${e##*/}" in data|.git) continue;; esac
+        cp -a "$e" "$work/"
+    done
+    for sub in $RIG_STATE_SUBDIRS; do mkdir -p "$work/data/$sub"; done
+    if [ -f "$src/data/banlist.json" ]; then cp "$src/data/banlist.json" "$work/data/"; else echo '[]' > "$work/data/banlist.json"; fi
+    [ -f "$src/data/requiredDataFiles.json" ] && cp "$src/data/requiredDataFiles.json" "$work/data/"
+    local -a ovs=()
+    [ -d "$RIG_ROOT/overlay" ] && ovs+=("$RIG_ROOT/overlay")
+    ovs+=("$@")
+    for ov in "${ovs[@]+"${ovs[@]}"}"; do
+        tar -C "$ov" --exclude='*.append' -cf - . | tar -C "$work" -xf - \
+            || rig_die "rig_corescripts_overlay: copying overlay $ov failed"
+    done
+    for ov in "${ovs[@]+"${ovs[@]}"}"; do
+        while IFS= read -r -d '' f; do
+            rel=${f#"$ov"/}; tgt=$work/${rel%.append}
+            [ -f "$tgt" ] || rig_die "rig_corescripts_overlay: $f appends to ${rel%.append}, which the work copy does not have"
+            [ -n "$(tail -c1 "$tgt")" ] && echo >> "$tgt"
+            while IFS= read -r line || [ -n "$line" ]; do
+                grep -qxF -- "$line" "$tgt" || printf '%s\n' "$line" >> "$tgt"
+            done < "$f"
+        done < <(find "$ov" -type f -name '*.append' -print0 | sort -z)
+    done
+    RIG_CORESCRIPTS_SRC=$src
+    RIG_CORESCRIPTS_WORK=$(cd "$work" && pwd)
+    RIG_CORESCRIPTS=$RIG_CORESCRIPTS_WORK
+    rig_note "CoreScripts work copy: $RIG_CORESCRIPTS (from $src; overlays: ${ovs[*]:-none})"
 }
 
 # Point the server at the server-scripts dir and, unless RIG_MASTER_ANNOUNCE=1, turn OFF master-server
