@@ -39,6 +39,14 @@ The rig's fixture calls:
   authoring cleanly drops players you removed).
 - **`rig_clear_state`** — empties the six subdirs for a run that starts from a blank world.
 
+**Where the live state lives.** These calls act on `$RIG_CORESCRIPTS/data`. Build a throwaway work
+copy first with **`rig_corescripts_overlay <workdir> [overlay-dir]...`** (typically
+`"$RIG_RUN_DIR/corescripts"` after `rig_run_dir <name>`): it copies your CoreScripts clone's scripts,
+creates an empty `data/`, layers the rig's server bridge and your overlay dirs on top (a file named
+`<file>.append` appends its lines to `<file>`, e.g. `scripts/customScripts.lua.append` holding
+`require("custom/my-hook")`), and points `RIG_CORESCRIPTS` at the copy. The fixture, the
+`requiredDataFiles.json` and any test hook then go into the copy, and your clone is never written.
+
 A fixture can be a **superset** that several scenarios share (e.g. one save holding players for two
 different choreographies). An unconnected player in the fixture is inert — a choreography only
 `rig_login`s the players it uses.
@@ -103,50 +111,84 @@ co-located scenarios or each player lands in a separate instance of the cell.)
 
 ---
 
-## 4. Testing with real game data (vs free content)
+## 4. Content profiles: free content and real game data
 
-The rig runs on either free content or a commercial game's data; the difference is the content block
-and the required-data-files list.
+A run needs two content lists that agree: the client's content block (`data=` / `fallback-archive=` /
+`content=` lines) and the server's `requiredDataFiles.json`. You name each content set once in
+`rig.conf` as a **content profile**, and a test selects it by name.
+
+```sh
+# rig.conf — one profile per content set on this machine
+RIG_CONTENT_example_DATA=$HOME/example-suite/game_template/data
+RIG_CONTENT_example_FILES="template.omwgame"
+
+RIG_CONTENT_mw_DATA="$HOME/morrowind/Data Files"
+RIG_CONTENT_mw_ARCHIVES="Morrowind.bsa Tribunal.bsa Bloodmoon.bsa"
+RIG_CONTENT_mw_FILES="Morrowind.esm Tribunal.esm Bloodmoon.esm"
+```
+
+| Key | Meaning |
+|---|---|
+| `RIG_CONTENT_<name>_DATA` | the data directory (required; spaces allowed) |
+| `RIG_CONTENT_<name>_ARCHIVES` | `.bsa` files under `DATA`, loaded as `fallback-archive=` (optional; space-separated) |
+| `RIG_CONTENT_<name>_FILES` | content files under `DATA`, in load order (required; space-separated) |
+
+In the test:
+
+```sh
+rig_use_content mw     # writes requiredDataFiles.json + the clients' content block for profile "mw"
+```
+
+`rig_use_content` dies with the offending key when the profile is incomplete (`DATA` missing, a file
+in `FILES` or `ARCHIVES` not under `DATA`). With `RIG_CONTENT_SOFT=1` it returns 4 instead, so a
+caller can treat "this machine has no such content" as a skip. `bin/rig doctor` checks every profile
+in `rig.conf` the same way. The profile `example` also accepts the older `EXAMPLE_SUITE=<data dir>`
+key (with `FILES=template.omwgame`).
+
+**Where the content block goes.** The rig writes it into each client's isolated profile
+(`<profile>/config/openmw/openmw.cfg`) when the client boots; the build's own `openmw.cfg` is never
+edited. This works because the build's local `openmw.cfg` names the user config dir
+(`config="?userconfig?"`, OpenMW 0.48+), which the rig points at the profile through
+`XDG_CONFIG_HOME`, and `data=`, `fallback-archive=` and `content=` are composing options: the
+profile's lines are appended after the build's. Two consequences:
+
+- The build's `openmw.cfg` must not carry `content=` lines of its own; they would load first and
+  shift the plugin order the server checks. `bin/rig doctor` fails on this.
+- OpenMW 0.47-era clients have no `config=` line but still read the user `openmw.cfg`, so the profile
+  block works there too. For a client that reads no user config, set `RIG_CONTENT_TARGET=build`: the
+  block then goes between `# RIG-CONTENT` markers into `$RIG_BUILD/openmw.cfg` and `rig_cleanup`
+  strips it. That fallback writes into the build dir, and a killed run leaves the block behind (since
+  OpenMW 0.49 a duplicated content file aborts the client: "Content file specified more than once").
+
+The lower-level calls remain available when you need a content list no profile describes:
+`rig_set_required_datafiles <file>...` and `rig_add_content <label> <cfg line>...`.
 
 ### Free content (redistributable, no game needed)
 
 OpenMW's **example-suite** (`git clone --depth 1 https://gitlab.com/OpenMW/example-suite`) ships a
-tiny free `template.omwgame`. It's enough for connection/visibility/movement tests:
+tiny free `template.omwgame`. It's enough for connection/visibility/movement tests (profile `example`
+above).
 
-```sh
-rig_set_required_datafiles template.omwgame   # prepends builtin.omwscripts for you (client entry 0)
-rig_add_content example "data=$EXAMPLE_SUITE" "content=template.omwgame"
-```
-
-`rig_set_required_datafiles` **already prepends `builtin.omwscripts`** (the ≥0.48 client auto-loads
-it as content entry 0), so pass only the real content files — here just `template.omwgame`. Passing
-`builtin.omwscripts` explicitly duplicates it, yielding a server list of `[builtin, builtin]` that the
-client (`[builtin, template.omwgame]`) is index-shift-rejected against ("template.omwgame is past the
-number of plugins used by the server") — disconnect before login.
+`rig_set_required_datafiles` **prepends `builtin.omwscripts`** (the ≥0.48 client auto-loads it as
+content entry 0), so a profile lists only the real content files — here just `template.omwgame`.
+Listing `builtin.omwscripts` explicitly duplicates it, yielding a server list of `[builtin, builtin]`
+that the client (`[builtin, template.omwgame]`) is index-shift-rejected against ("template.omwgame is
+past the number of plugins used by the server") — disconnect before login.
 
 ### Real game data (e.g. Morrowind)
 
 Real data exercises the game the way players do — actual cells, NPCs, doors, items, spells. Two
-must-get-right details:
+must-get-right details, both handled by a complete profile:
 
-1. **BSA archives are not auto-loaded.** OpenMW does **not** read `.bsa` from a data dir; you must
-   pass each as a `fallback-archive=` line or the client boots with no meshes/textures/GUI and dies:
-
-   ```sh
-   rig_add_content mw "data=$MW_DATA" \
-       "fallback-archive=Morrowind.bsa" "fallback-archive=Tribunal.bsa" "fallback-archive=Bloodmoon.bsa" \
-       "content=Morrowind.esm" "content=Tribunal.esm" "content=Bloodmoon.esm"
-   ```
+1. **BSA archives are not auto-loaded.** OpenMW does **not** read `.bsa` from a data dir; each must
+   be a `fallback-archive=` line (the profile's `ARCHIVES`) or the client boots with no
+   meshes/textures/GUI and dies.
 
 2. **`requiredDataFiles.json` must match the client's content list ENTRY-FOR-ENTRY**, or every client
    is rejected with an index-shifted mismatch ("X is past the number of plugins used by the server")
    and **disconnects before login** — so the player never reaches the world and every in-world assert
-   silently fails. `rig_set_required_datafiles` writes it for you (empty checksum lists = accept any
-   build):
-
-   ```sh
-   rig_set_required_datafiles Morrowind.esm Tribunal.esm Bloodmoon.esm
-   ```
+   silently fails. `rig_use_content` writes it from `FILES` in the same order as the `content=` lines
+   (empty checksum lists = accept any build).
 
    **`builtin.omwscripts` gotcha:** modern clients auto-load `builtin.omwscripts` as content **entry
    0**, so the server's required list must put it **first** — `rig_set_required_datafiles` prepends it
@@ -193,7 +235,7 @@ each.
 **Invisible UI:** if dialogs are invisible but still respond to clicks, your distro's MyGUI was built
 without `CMAKE_BUILD_TYPE` (Debian's `libmyguiengine3debian1` renders nothing). Point
 `RIG_MYGUI_FIXED` at a Release-built MyGUI under the same soname; the rig `LD_LIBRARY_PATH`-shadows
-it. Headless tiers can't see this bug — only a human or a screenshot catches it.
+it. The key is empty by default and never auto-detected; `bin/rig doctor` prints which MyGUI is used. Headless tiers can't see this bug — only a human or a screenshot catches it.
 
 **Isolated profiles are mandatory.** A shared `~/.config/openmw` carries another engine version's
 `input_v3.xml`/`settings.cfg`/`shaders.yaml`; sharing it breaks this build's bindings and shaders.

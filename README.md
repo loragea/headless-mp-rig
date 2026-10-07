@@ -18,7 +18,8 @@ each one sees.
 
 ## Requirements
 
-- Linux with **Xvfb**, **xdotool**, and **ImageMagick** (`magick`/`import`), plus `bash`, `unzip`.
+- Linux with **Xvfb**, **xdotool**, **ImageMagick 7** (`magick`/`import`) and **python3**, plus
+  `bash`, `tar`, `procps` (`pgrep`/`pkill`); `unzip` only to import zipped server saves. No `jq`.
 - A compiled **client + dedicated server** of your OpenMW-MP build, and its **server-side Lua
   scripts** (TES3MP CoreScripts or your fork's).
 - For the graphics gate: a working GL (software `llvmpipe` is fine, just slow).
@@ -28,8 +29,9 @@ each one sees.
 ## Quickstart
 
 ```sh
-cp rig.conf.example rig.conf      # then edit: point RIG_BUILD at your build, set the binary names
-$EDITOR rig.conf
+cp rig.conf.example rig.conf      # then edit: point RIG_BUILD at your build, set the binary names,
+$EDITOR rig.conf                  # name your content (RIG_CONTENT_<name>_*)
+bin/rig doctor                    # checks every key; each problem names the key to fix
 
 # sanity-check the verification libs with no game data needed:
 lib/compare.sh selftest
@@ -38,6 +40,8 @@ lib/logcheck.sh selftest
 # run the worked example — two real clients in one world on FREE example-suite content, cross-client
 # sync asserted from the logs (green exit 0 / red non-zero). A full run takes a few minutes on
 # software GL; run it directly (or under your CI's long-job runner). See scenarios/example/README.md.
+# Everything a run writes lands in its own dir under RIG_RUNS (default runs/); your build dir and your
+# CoreScripts clone are only read.
 bin/run-example.sh
 
 # author + run a targeted feature test (see docs/FEATURE-TESTS.md):
@@ -46,17 +50,21 @@ $EDITOR my-test.sh                # fill in the four TODO blocks
 ./my-test.sh
 
 # probe an unknown headless action interactively:
-FIXTURE=scenarios/example PLAYER=a templates/explore-client.sh   # boots a client and stays up
+FIXTURE=scenarios/example OVERLAY=scenarios/example/coreScripts-overlay PLAYER=a \
+    templates/explore-client.sh   # boots a client and stays up
 ```
 
 ## Layout
 
 ```
-rig.conf.example     copy to rig.conf; sets binary names, build dir, scripts dir, displays, timeouts
-lib/rig.sh           the rig: boot server+clients, load fixtures, drive input, event-gated waits, capture
+rig.conf.example     copy to rig.conf; every key, commented: build, scripts, content profiles, runs, displays
+bin/rig              command front end: `bin/rig doctor` validates rig.conf and the host
+lib/rig.sh           the rig: run dirs, CoreScripts work copy, boot server+clients, load fixtures, drive
+                     input, event-gated waits, capture
 lib/compare.sh       screenshot regression compare (magick, per-image tolerance) — library + CLI + selftest
 lib/logcheck.sh      log event-signature compare (masked, ordered) — library + CLI + selftest
 bin/run-example.sh   the runnable free-content example: 2 clients in one world, cross-client sync from logs
+overlay/             the rig's server-side bridge, layered into every CoreScripts work copy
 templates/           starting points: repro-template.sh, explore-client.sh
 scenarios/           worked example fixtures + blessed references (free example-suite content)
 docs/                the manuals (below)
