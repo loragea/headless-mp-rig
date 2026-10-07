@@ -71,9 +71,9 @@ docs/                the manuals (below)
 - **[docs/VERIFICATION.md](docs/VERIFICATION.md)** — the three signal types and **when to use each**
   (log-gated vs static reference image vs dynamic pair), plus the exact ImageMagick metrics,
   thresholds, and freak-frame handling.
-- **[docs/COOKBOOK.md](docs/COOKBOOK.md)** — the headless-action recipes: casting, scroll timing,
-  camera turns, inventory drag-and-drop, item pickup, finding GUI click coordinates, catching a
-  transient visual, and the combat-state confounds that make casts "flaky".
+- **[docs/cookbook/](docs/cookbook/)** — the headless-action recipes, one file each: casting, scroll
+  timing, camera turns, inventory drag-and-drop, item pickup, finding GUI click coordinates, catching
+  a transient visual, and the combat-state confounds that make casts "flaky".
 - **[docs/FEATURE-TESTS.md](docs/FEATURE-TESTS.md)** — worked patterns for feature guards: **PvP
   melee damage-sync**, **summon lifecycle + caster identity**, **magic-effect identity sync**, and
   **player→player effect sync** — each with its vehicle and its load-bearing assertions.

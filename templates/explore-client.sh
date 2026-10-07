@@ -5,7 +5,7 @@
 # Boots ONE client into a fixture, logs a player in, and STAYS UP so you can drive attempts from
 # separate shells and iterate fast — one action -> screenshot -> read screenshot -> check the log ->
 # adjust -> repeat — instead of re-running a whole scenario per attempt. This is a throwaway probe,
-# NOT a blessed test. Record what you learn in docs/COOKBOOK.md so a Tier-C action becomes Tier-B.
+# NOT a blessed test. Record what you learn in docs/cookbook/ so a Tier-C action becomes Tier-B.
 #
 # Usage:  FIXTURE=/path/to/scenarios/foo  PLAYER=a  explore-client.sh
 #         (for real game data, set the content env below; defaults to the free example-suite)

@@ -57,7 +57,7 @@ rig_start_idle_wiggler                            # suppress the vanity camera f
 #   Prefer rig_wait_event on a server-log line over a blind sleep. Don't tighten the caps.
 #   e.g.  rig_chat_command "$RIG_DISPLAY" "/combatprep"
 #         rig_key "$RIG_DISPLAY" F                 # draw weapon
-#         xdotool mousedown 1; sleep 0.7; xdotool mouseup 1   # swing (see COOKBOOK KB-1)
+#         xdotool mousedown 1; sleep 0.7; xdotool mouseup 1   # swing (KB-1-synthetic-left-click-cast)
 
 # TODO 4 — VERDICT from the logs. Poll (never single-grep — the server's captured stdout is
 #   block-buffered) both logs for the feature's signature; print a clear PASS/FAIL and exit non-zero

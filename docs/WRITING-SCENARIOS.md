@@ -75,7 +75,8 @@ practical to set this way:
   magic skill so a spell never fizzles). The server honours the snapshot; no recompute.
 - **NPC / creature health and stats** — edit the object in the relevant `cell/<cell>.json` under
   `objectData.<refnum>.stats.health{Base,Current,Modified}`. Example use: bump a target NPC's health
-  so a test scroll can't accidentally kill it mid-assertion (see COOKBOOK KB-14).
+  so a test scroll can't accidentally kill it mid-assertion (see
+  [KB-14-cast-during-combat-pre-melee-window](cookbook/KB-14-cast-during-combat-pre-melee-window.md)).
 - **Inventory + quick-keys** — put the test item in the player's inventory and bind it to a quick-key
   in the save, so the choreography can equip-and-use it with one key.
 
@@ -208,15 +209,15 @@ complexity from *sequences*, not fancy single actions.
 - **Tier A — trivial, always reliable** (keyboard-driven, deterministic): login/logout, movement taps
   (`rig_tap w`), stance toggles (`F` weapon, `R` spell), quick-keys (`1`–`0`), activate (`space`),
   chat commands (`rig_chat_command`).
-- **Tier B — needs a known recipe** (in COOKBOOK, reliable once calibrated): casting (synthetic LMB),
-  scroll casting (quick-key + read-parchment), hiding the chat/welcome window, inventory open,
+- **Tier B — needs a known recipe** (in [cookbook/](cookbook/), reliable once calibrated): casting
+  (synthetic LMB), scroll casting (quick-key + read-parchment), hiding the chat/welcome window, inventory open,
   dropping an item into the world, picking a world item up.
 - **Tier C — calibration-sensitive** (drive via the exploration loop, expect iteration): precise
   camera turns, timing a screenshot to a sub-second visual, anything mouse-*aimed* in gameplay.
 
 Rule of thumb: if an action is "press key / hold key / type text / activate", it's Tier A–B and
 cheap. If it needs *aiming* or *frame-timing*, it's Tier C — still doable, but budget a calibration
-pass and **record the result in COOKBOOK** so it's Tier B next time.
+pass and **record the result in [cookbook/](cookbook/)** so it's Tier B next time.
 
 ---
 
@@ -233,7 +234,8 @@ scenario** — isolate it:
    beware game-logic confounds: a "flaky" action is often a legitimate in-game failure (a skill-based
    cast chance, a resource cost, a modal window) that headless work hides. Rule those out before
    blaming the input. When in doubt, ask someone with game knowledge — it resolves these instantly.
-4. **Record the outcome in COOKBOOK** — what worked, what didn't, and *why*, including the dead ends.
+4. **Record the outcome in [cookbook/](cookbook/)** — what worked, what didn't, and *why*, including
+   the dead ends.
    That record is the point: it turns a Tier-C action into a Tier-B recipe.
 
 ---
@@ -242,7 +244,8 @@ scenario** — isolate it:
 
 - **Always resume from a save; never run chargen mid-scenario** (returning-load is deterministic;
   chargen settles less predictably). If you must drive chargen, screen-stability-gate every dialog
-  (see COOKBOOK KB-15) and keep a fresh-client retry.
+  (see [KB-15-screen-stability-wait](cookbook/KB-15-screen-stability-wait.md)) and keep a
+  fresh-client retry.
 - **Suppress vanity for the whole run** (§5) — it is the usual cause of "camera non-determinism".
 - **Interior light sources flicker by design** in some games (Morrowind), which makes full-frame
   perceptual-hash screenshots bimodal — prefer stable-lighting venues for full-frame STABLE shots, or

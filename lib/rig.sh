@@ -388,10 +388,11 @@ rig_wait_log() {
     return 1
 }
 
-# EVENT-GATE a wait on a log line (the KB-14 "poll, don't blanket-sleep" pattern, generalized): poll a
-# log for an ERE up to a SECONDS cap. Replaces the blind post-login/action sleeps — the caller waits
-# exactly as long as the event takes (plus its own settle margin), and a degraded run just waits up to
-# the cap instead of desyncing. $1 log, $2 ERE, $3 cap secs (default 10), $4 interval (default 0.5).
+# EVENT-GATE a wait on a log line (the "poll, don't blanket-sleep" pattern of cookbook recipe
+# KB-14-cast-during-combat-pre-melee-window, generalized): poll a log for an ERE up to a SECONDS cap.
+# Replaces blind post-login/action sleeps — the caller waits exactly as long as the event takes (plus
+# its own settle margin), and a degraded run just waits up to the cap instead of desyncing.
+# $1 log, $2 ERE, $3 cap secs (default 10), $4 interval (default 0.5).
 # Returns 0 on hit, 1 on cap (caller proceeds; the phase asserts catch a genuinely missing event).
 rig_wait_event() {
     local log=$1 pat=$2 cap=${3:-10} iv=${4:-0.5} t0=$SECONDS
@@ -434,7 +435,7 @@ rig_grab_region() {
     if [ "$geom" != FULL ]; then magick "$out" -crop "$geom" +repage "$out" 2>/dev/null; fi
 }
 
-# SCREEN-STABILITY wait (KB-15): return once the (optionally cropped) frame has SETTLED — two
+# SCREEN-STABILITY wait (KB-15-screen-stability-wait): return once the (optionally cropped) frame has SETTLED — two
 # consecutive grabs matching within eps (normalized RMSE) — and, unless delta='-', only after the
 # region has first CHANGED from the at-call baseline by >= delta. The change-gate stops a slow
 # transition from being declared "ready" while still showing the PREVIOUS content (the blind-keystroke

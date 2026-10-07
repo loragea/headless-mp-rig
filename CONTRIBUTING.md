@@ -35,8 +35,12 @@ client and server, so it is not part of CI.
    variable with a default, documented in `rig.conf.example`.
 2. Prove it: add a `selftest` case when the logic is testable without a game (masking, metrics,
    thresholds), or a step in `bin/run-example.sh` when the free example content can exercise it.
-3. Document it: a headless recipe goes in `docs/COOKBOOK.md` under the next `KB-n` number, with
-   its confidence tag (VALIDATED / PARTIAL / THEORY) and the OpenMW version it was checked on.
-   `KB` numbers are never reused or renumbered, because downstream projects cite them. Anything
+3. Document it. A headless recipe is a new file in `docs/cookbook/` named by its ID,
+   `KB-<n>-<slug>.md`: `n` is the next free number, `slug` is 2–6 lowercase kebab words that make
+   sense to a reader who has not seen the recipe. Line 1 is `# <ID> — <title>: <one-phrase
+   abstract>`, line 2 is `Read when: <the situation that sends a reader here>`, then its confidence
+   tag (meanings in [docs/cookbook/README.md](docs/cookbook/README.md)) and the OpenMW version it was
+   checked on. Cite recipes by their full ID. Don't add an index; the directory listing is the
+   catalog. `KB` numbers are never reused or renumbered, because other projects cite them. Anything
    else goes in the fitting doc (`docs/VERIFICATION.md`, `docs/WRITING-SCENARIOS.md`,
    `docs/FEATURE-TESTS.md`).

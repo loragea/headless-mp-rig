@@ -13,7 +13,7 @@ authoritative state change from the logs / saves**, not a screenshot.
    clears whatever a run saves, the blessed fixture stays pristine. This makes the outcome
    **deterministic** (a maxed weapon-skill + agility vs a low-evasion victim clamps hit chance to
    100%; a granted scroll always casts).
-2. **Drive the real action** from a real client (attack input, cast recipe from COOKBOOK).
+2. **Drive the real action** from a real client (attack input, cast recipe from [cookbook/](cookbook/)).
 3. **Assert the property where it is AUTHORITATIVE** — the victim's synced/persisted state, the effect
    id read off the wire, the despawn origin — not just "something happened". The difference between a
    real guard and a weak one is asserting the *authoritative* side.
@@ -42,8 +42,8 @@ Two engine facts that shape these tests:
   doesn't one-shot them mid-assert. Wielding a **real weapon** (not fists) drives the weapon-id `onHit`
   signature.
 - **Attack input:** draw the weapon (`F`), then `xdotool mousedown 1; sleep 0.7; mouseup 1` (charge +
-  release). A short forward `w` tap between swings closes melee reach. Hide chat first (KB-4) so the
-  swing click isn't eaten.
+  release). A short forward `w` tap between swings closes melee reach. Hide chat first
+  ([KB-4-hide-chat-window](cookbook/KB-4-hide-chat-window.md)) so the swing click isn't eaten.
 - **Health readout must be chat-independent.** A `/hpreport`-style command sent *after* hiding chat
   never dispatches (a hidden chat window won't open on the say-key). Instead log the pre-combat
   baseline inside `/combatprep` (chat still visible) and register an `OnObjectHit` handler that logs
@@ -65,8 +65,9 @@ when the caster's effect ends — not merely "a summon appeared".
 
 - **Vehicle:** grant a cast-once summon scroll + quick-key server-side (`inventoryHelper.addItem` +
   `LoadItemChanges` + a `quickKeys` entry + `LoadQuickKeys`), so the fixture is untouched. Cast with
-  the KB-2 out-of-combat recipe. Choose the caster/observer roles by login order (log the observer in
-  first so it owns cell authority).
+  the [KB-2-scroll-quick-key-read-parchment](cookbook/KB-2-scroll-quick-key-read-parchment.md)
+  out-of-combat recipe. Choose the caster/observer roles by login order (log the observer in first so
+  it owns cell authority).
 - **Assertions:** the server's `used inventory item <scroll>` line, then the summon chain
   (`ID_OBJECT_SPAWN`, both clients `setting summoned creatureActorId`, `ID_OBJECT_DELETE` at effect
   end, no creature left in the cell json). Plus the two identity guards:
@@ -90,7 +91,9 @@ guard that asserting only the spell *name* would miss (a migration that garbles 
 still logs the name).
 
 - **Vehicle:** the caster carries a **Target-range** effect scroll (e.g. a Drain-Attribute scroll) on
-  a quick-key and faces the victim in the fixture. Cast the KB-2 out-of-combat recipe at the victim.
+  a quick-key and faces the victim in the fixture. Cast the
+  [KB-2-scroll-quick-key-read-parchment](cookbook/KB-2-scroll-quick-key-read-parchment.md)
+  out-of-combat recipe at the victim.
   **Prime the quick-key first** — a scroll quick-key sends an item-use packet that waits for server
   approval, so open+close the inventory once and settle before the cast, else early-after-login the
   round-trip isn't ready and the click falls through to a plain activate.
