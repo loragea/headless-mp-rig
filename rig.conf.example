@@ -19,6 +19,10 @@ RIG_SERVER_CFG=tes3mp-server-default.cfg
 # `home =` to this and loads scenario state under its data/ dir.
 RIG_CORESCRIPTS=$HOME/CoreScripts
 
+# Master-server announce. The rig turns it OFF in the server config every run (there is no master in
+# a test env, and announcing makes shutdown block ~10s on the deregister). Set 1 to leave it as is.
+# RIG_MASTER_ANNOUNCE=0
+
 # --- Headless environment ---------------------------------------------------------------------
 # One Xvfb display per client (see docs/WRITING-SCENARIOS.md "one display per client"). The window
 # geometry math (centre 640,360) assumes the 1280x720 screen — change both together if you must.

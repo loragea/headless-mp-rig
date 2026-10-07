@@ -45,6 +45,7 @@ RIG_CLIENT_BIN=${RIG_CLIENT_BIN:-tes3mp}                     # client executable
 RIG_SERVER_BIN=${RIG_SERVER_BIN:-tes3mp-server}              # dedicated-server executable name inside $RIG_BUILD
 RIG_SERVER_CFG=${RIG_SERVER_CFG:-tes3mp-server-default.cfg}  # server default-config filename inside $RIG_BUILD
 RIG_CORESCRIPTS=${RIG_CORESCRIPTS:-$RIG_ROOT/CoreScripts}    # server-side Lua scripts (TES3MP CoreScripts or a fork)
+RIG_MASTER_ANNOUNCE=${RIG_MASTER_ANNOUNCE:-0}                # 1 = leave master-server announce as the cfg has it
 RIG_MYGUI_FIXED=${RIG_MYGUI_FIXED:-$HOME/mygui-fixed-lib}    # Release MyGUI under the Debian soname
 RIG_DISPLAY=${RIG_DISPLAY:-:99}                              # client 1's display (single-client repros use this)
 RIG_DISPLAY2=${RIG_DISPLAY2:-:100}                           # client 2's display (2-player runs)
@@ -118,9 +119,15 @@ rig_check_prereqs() {
     command -v import  >/dev/null || rig_die "ImageMagick 'import' not installed"
 }
 
-# Point the server at our CoreScripts clone. cmake reconfigures clobber this file — call every run.
+# Point the server at the server-scripts dir and, unless RIG_MASTER_ANNOUNCE=1, turn OFF master-server
+# announce. cmake reconfigures clobber this file (regenerating it from the source default, which ships
+# master enabled) — call every run. Announce OFF matters beyond hygiene: with it on, the server tries to
+# DEREGISTER from the master on shutdown and BLOCKS ~10s on the connect timeout (there is no master in a
+# headless test env), which delays the OnServerExit a shutdown check waits for.
 rig_set_server_home() {
     sed -i "s|^home = .*|home = $RIG_CORESCRIPTS|" "$RIG_BUILD/${RIG_SERVER_CFG}"
+    [ "$RIG_MASTER_ANNOUNCE" = 1 ] || \
+        sed -i '/^\[MasterServer\]/,/^\[/ s/^enabled = true/enabled = false/' "$RIG_BUILD/${RIG_SERVER_CFG}"
 }
 
 # Write a permissive server requiredDataFiles.json matching exactly the client's content list, with an
