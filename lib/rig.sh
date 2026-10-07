@@ -8,11 +8,16 @@
 #   * Xvfb + llvmpipe software GL — world load takes ~30s, DON'T tighten the sleeps.
 #   * SDL_MOUSE_RELATIVE_MODE_WARP=1 — SDL relative mode ignores XTest motion; warp mode reads
 #     absolute positions, so synthetic mouse-look (xdotool mousemove) actually turns the camera.
-#   * LD_LIBRARY_PATH=$HOME/mygui-fixed-lib — Debian's MyGUI (built without CMAKE_BUILD_TYPE)
-#     renders NOTHING: all UI invisible but still focusable. Headless tiers can't see it; only a
-#     human (or a screenshot) catches it. The fixed-lib is a Release MyGUI under the Debian filename.
+#   * LD_LIBRARY_PATH=$RIG_MYGUI_FIXED — Debian's MyGUI (built without CMAKE_BUILD_TYPE) renders
+#     NOTHING: all UI invisible but still focusable. Headless tiers can't see it; only a human (or a
+#     screenshot) catches it. Point RIG_MYGUI_FIXED at a Release MyGUI under the Debian filename; it is
+#     never auto-detected.
 #   * Isolated XDG profile — the shared ~/.config/openmw carries another engine version's
 #     input_v3.xml/settings.cfg/shaders.yaml; sharing it breaks this build's bindings/shaders.
+#   * Nothing outside the run is written: content goes into each client profile's openmw.cfg, the
+#     server reads a run-scoped tes3mp-server.cfg (its XDG_CONFIG_HOME), and server state lives in a
+#     throwaway CoreScripts work copy (rig_corescripts_overlay). $RIG_BUILD and $RIG_CORESCRIPTS are
+#     only read.
 #   * Use `pgrep -x` / `pkill -x`, never `-f`: `-f` self-matches the shell wrapper.
 #   * A stale ${RIG_SERVER_BIN} holds the port and silently services the client with old config.
 #   * A stale Xvfb on the display (carrying an Xauthority) makes the auth-less Xvfb lose the race
@@ -44,11 +49,12 @@ RIG_ROOT=${RIG_ROOT:-$(cd "$_RIG_LIB_DIR/.." && pwd)}
 RIG_BUILD=${RIG_BUILD:-$RIG_ROOT/build}                      # dir holding the client + server binaries (SET THIS)
 RIG_CLIENT_BIN=${RIG_CLIENT_BIN:-tes3mp}                     # client executable name inside $RIG_BUILD
 RIG_SERVER_BIN=${RIG_SERVER_BIN:-tes3mp-server}              # dedicated-server executable name inside $RIG_BUILD
-RIG_SERVER_CFG=${RIG_SERVER_CFG:-tes3mp-server-default.cfg}  # server default-config filename inside $RIG_BUILD
+RIG_SERVER_CFG=${RIG_SERVER_CFG:-tes3mp-server-default.cfg}  # server default-config filename inside $RIG_BUILD (read only)
 RIG_CORESCRIPTS=${RIG_CORESCRIPTS:-$RIG_ROOT/CoreScripts}    # server-side Lua scripts (TES3MP CoreScripts or a fork)
 RIG_MASTER_ANNOUNCE=${RIG_MASTER_ANNOUNCE:-0}                # 1 = leave master-server announce as the cfg has it
-RIG_MYGUI_FIXED=${RIG_MYGUI_FIXED:-$HOME/mygui-fixed-lib}    # Release MyGUI under the Debian soname
+RIG_MYGUI_FIXED=${RIG_MYGUI_FIXED:-}                         # Release MyGUI dir (LD_LIBRARY_PATH); empty = none
 RIG_RUNS=${RIG_RUNS:-$RIG_ROOT/runs}                         # parent of the per-run directories (rig_run_dir)
+RIG_CONTENT_TARGET=${RIG_CONTENT_TARGET:-profile}            # profile (default) | build (fallback, see rig_add_content)
 RIG_KEEP_WORK=${RIG_KEEP_WORK:-0}                            # 1 = keep the CoreScripts work copy after the run
 RIG_DISPLAY=${RIG_DISPLAY:-:99}                              # client 1's display (single-client repros use this)
 RIG_DISPLAY2=${RIG_DISPLAY2:-:100}                           # client 2's display (2-player runs)
@@ -70,8 +76,8 @@ RIG_CHARGEN_DLG=${RIG_CHARGEN_DLG:-5}                         # secs for each ch
 RIG_WIGGLE_INTERVAL=${RIG_WIGGLE_INTERVAL:-20}               # idle-wiggler period (s); MUST be < fVanityDelay (30s)
 
 RIG_XVFB='' RIG_XVFB2='' RIG_XVFB3='' RIG_SRV='' RIG_CLI='' RIG_CLI2='' RIG_CLI3='' RIG_WIGGLER=''
-# Per-run state (set by rig_run_dir / rig_corescripts_overlay).
-RIG_RUN_DIR=${RIG_RUN_DIR:-} RIG_CORESCRIPTS_WORK=''
+# Per-run state (set by rig_run_dir / rig_corescripts_overlay / rig_set_server_home / rig_add_content).
+RIG_RUN_DIR=${RIG_RUN_DIR:-} RIG_CORESCRIPTS_WORK='' RIG_SRV_HOME='' RIG_CONTENT_LABEL='' RIG_CONTENT_LINES=()
 
 rig_die()  { echo "rig: $*" >&2; exit 1; }
 rig_note() { echo ">>> rig: $*" >&2; }
@@ -85,14 +91,16 @@ rig_cleanup() {
     # Force-sweep survivors by name — safe because the rig is the sole runner of these binaries
     # (same rationale as `pkill -x Xvfb` below; rig_require_clean refuses to start against a
     # stray ${RIG_SERVER_BIN}). pkill -x (exact name), never -f.
-    pkill -9 -x ${RIG_CLIENT_BIN}        2>/dev/null || true
-    pkill -x    ${RIG_SERVER_BIN} 2>/dev/null || true
-    # Strip our transient content block from the shared openmw.cfg so it never leaks into a later
-    # run's boot check. Since OpenMW 0.49 (main.cpp "Content file specified more than once. Aborting")
-    # a leftover template.omwgame here duplicates the boot check's own profile content and hard-aborts
-    # the client. (a known engine issue.)
-    [ -n "${RIG_BUILD:-}" ] && [ -f "$RIG_BUILD/openmw.cfg" ] \
-        && sed -i '/^# RIG-CONTENT BEGIN/,/^# RIG-CONTENT END/d' "$RIG_BUILD/openmw.cfg" 2>/dev/null || true
+    pkill -9 -x "${RIG_CLIENT_BIN}" 2>/dev/null || true
+    pkill -x    "${RIG_SERVER_BIN}" 2>/dev/null || true
+    # Fallback mode only (RIG_CONTENT_TARGET=build): strip the content block from the build's
+    # openmw.cfg. A leftover block there duplicates a later run's content, and since OpenMW 0.49
+    # (main.cpp "Content file specified more than once. Aborting") that hard-aborts the client.
+    # In the default profile mode the build cfg is never written, so a crash cannot leave one.
+    if [ "$RIG_CONTENT_TARGET" = build ] && [ -n "${RIG_BUILD:-}" ] \
+       && grep -q '^# RIG-CONTENT BEGIN' "$RIG_BUILD/openmw.cfg" 2>/dev/null; then
+        sed -i '/^# RIG-CONTENT BEGIN/,/^# RIG-CONTENT END/d' "$RIG_BUILD/openmw.cfg" 2>/dev/null || true
+    fi
     # Drop the CoreScripts work copy (it is a throwaway copy; RIG_KEEP_WORK=1 keeps it for a post-mortem).
     if [ -n "$RIG_CORESCRIPTS_WORK" ] && [ "$RIG_KEEP_WORK" != 1 ] && [ -f "$RIG_CORESCRIPTS_WORK/.rig-workcopy" ]; then
         rm -rf "${RIG_CORESCRIPTS_WORK:?}"
@@ -227,14 +235,33 @@ rig_corescripts_overlay() {
 }
 
 # Point the server at the server-scripts dir and, unless RIG_MASTER_ANNOUNCE=1, turn OFF master-server
-# announce. cmake reconfigures clobber this file (regenerating it from the source default, which ships
-# master enabled) — call every run. Announce OFF matters beyond hygiene: with it on, the server tries to
-# DEREGISTER from the master on shutdown and BLOCKS ~10s on the connect timeout (there is no master in a
-# headless test env), which delays the OnServerExit a shutdown check waits for.
+# announce — by writing a RUN-SCOPED user config, never the build's default cfg. The server loads
+# $RIG_BUILD/tes3mp-server-default.cfg, then overlays <user-config>/tes3mp-server.cfg, where the user
+# config dir is $XDG_CONFIG_HOME/openmw (apps/openmw-mp/main.cpp loadSettings; components/files/
+# linuxpath.cpp). rig_start_server starts the server with XDG_CONFIG_HOME=<run>/server/config and
+# XDG_DATA_HOME=<run>/server/data, so the two keys below win for this run only and the server's own
+# timestamped log lands in the run dir too. Creates the run dir (rig_run_dir) if the consumer did not.
+# Announce OFF matters beyond hygiene: with it on, the server tries to DEREGISTER from the master on
+# shutdown and BLOCKS ~10s on the connect timeout (there is no master in a headless test env), which
+# delays the OnServerExit a shutdown check waits for.
 rig_set_server_home() {
-    sed -i "s|^home = .*|home = $RIG_CORESCRIPTS|" "$RIG_BUILD/${RIG_SERVER_CFG}"
-    [ "$RIG_MASTER_ANNOUNCE" = 1 ] || \
-        sed -i '/^\[MasterServer\]/,/^\[/ s/^enabled = true/enabled = false/' "$RIG_BUILD/${RIG_SERVER_CFG}"
+    [ -n "$RIG_RUN_DIR" ] && [ -d "$RIG_RUN_DIR" ] || rig_run_dir "${RIG_RUN_NAME:-$(basename "${0%.sh}")}" >/dev/null
+    RIG_SRV_HOME=$RIG_RUN_DIR/server
+    _rig_write_server_cfg
+}
+# (Re)write the run-scoped tes3mp-server.cfg from the current RIG_CORESCRIPTS; rig_start_server calls it
+# again, so a work copy built after rig_set_server_home is still the one the server uses.
+_rig_write_server_cfg() {
+    mkdir -p "$RIG_SRV_HOME/config/openmw" "$RIG_SRV_HOME/data"
+    {
+        echo "# Run-scoped server config written by headless-mp-rig (rig_set_server_home)."
+        echo "[Plugins]"
+        echo "home = $RIG_CORESCRIPTS"
+        if [ "$RIG_MASTER_ANNOUNCE" != 1 ]; then
+            echo "[MasterServer]"
+            echo "enabled = false"
+        fi
+    } > "$RIG_SRV_HOME/config/openmw/tes3mp-server.cfg"
 }
 
 # Write a permissive server requiredDataFiles.json matching exactly the client's content list, with an
@@ -319,16 +346,92 @@ rig_clear_state() {
     rig_note "cleared live server state ($d: $RIG_STATE_SUBDIRS emptied)"
 }
 
-# Set the client's openmw.cfg game-content block (data=/fallback-archive=/content= lines). REPLACES any
-# prior block rather than appending, so runs don't accumulate stale content (e.g. an earlier run's
-# example-suite block leaking into a run on other content). NOTE for content that ships BSA archives:
-# you MUST pass them as `fallback-archive=` lines (OpenMW does not auto-load .bsa from a data dir) or
-# the client boots with no textures/meshes/GUI and dies. $1 = a label (for the block comment); $2... = the cfg lines to set.
+# Set the clients' game-content block (data= / fallback-archive= / content= lines). REPLACES any prior
+# block rather than appending. $1 = a label (for the block comment); $2... = the cfg lines. NOTE for
+# content that ships BSA archives: you MUST pass them as `fallback-archive=` lines (OpenMW does not
+# auto-load .bsa from a data dir) or the client boots with no textures/meshes/GUI and dies.
+# Where the block goes (RIG_CONTENT_TARGET):
+#   profile (default) — remembered here and written into each client profile's own openmw.cfg
+#     ($prof/config/openmw/openmw.cfg) when that client boots. The client reads the build's local
+#     openmw.cfg first, then the user cfg its `config="?userconfig?"` line names (= the profile, through
+#     XDG_CONFIG_HOME); data=/content=/fallback-archive= are composing options, so the profile's lines
+#     are APPENDED after the build's (components/files/configurationmanager.cpp). Requirement: the
+#     build's openmw.cfg carries no content= lines of its own, or they come first and shift the plugin
+#     order the server checks (rig_doctor fails on this). 0.47-era builds read the user cfg too.
+#   build (fallback) — the block is written between '# RIG-CONTENT' markers into $RIG_BUILD/openmw.cfg
+#     and stripped by rig_cleanup. Only for a build whose client does not read a user openmw.cfg; it
+#     writes into the build dir, and a crash (kill -9) leaves the block behind.
+# Prefer rig_use_content <profile>, which builds the lines and requiredDataFiles.json from rig.conf.
 rig_add_content() {
     local label=$1; shift
-    local cfg=$RIG_BUILD/openmw.cfg
-    sed -i '/^# RIG-CONTENT BEGIN/,/^# RIG-CONTENT END/d' "$cfg"
-    { echo "# RIG-CONTENT BEGIN ($label)"; printf '%s\n' "$@"; echo "# RIG-CONTENT END"; } >> "$cfg"
+    RIG_CONTENT_LABEL=$label
+    RIG_CONTENT_LINES=("$@")
+    if [ "$RIG_CONTENT_TARGET" = build ]; then
+        local cfg=$RIG_BUILD/openmw.cfg
+        sed -i '/^# RIG-CONTENT BEGIN/,/^# RIG-CONTENT END/d' "$cfg"
+        { echo "# RIG-CONTENT BEGIN ($label)"; printf '%s\n' "$@"; echo "# RIG-CONTENT END"; } >> "$cfg"
+    fi
+}
+
+# Write the remembered content block into one profile's openmw.cfg (profile mode), replacing an earlier
+# rig block and keeping any other lines a consumer seeded there. $1 = profile dir.
+_rig_profile_content() {
+    local prof=$1 cfg=$1/config/openmw/openmw.cfg
+    [ "$RIG_CONTENT_TARGET" = build ] && return 0
+    mkdir -p "$prof/config/openmw"
+    [ -f "$cfg" ] && sed -i '/^# RIG-CONTENT BEGIN/,/^# RIG-CONTENT END/d' "$cfg"
+    [ "${#RIG_CONTENT_LINES[@]}" -gt 0 ] || return 0
+    { echo "# RIG-CONTENT BEGIN ($RIG_CONTENT_LABEL)"; printf '%s\n' "${RIG_CONTENT_LINES[@]}"; echo "# RIG-CONTENT END"; } >> "$cfg"
+}
+
+# Content profiles. rig.conf names each content set once:
+#   RIG_CONTENT_<name>_DATA      the data directory (required)
+#   RIG_CONTENT_<name>_ARCHIVES  space-separated .bsa files under DATA, loaded as fallback-archive= (optional)
+#   RIG_CONTENT_<name>_FILES     space-separated content files under DATA, in load order (required)
+# The profile "example" falls back to the older EXAMPLE_SUITE key with FILES=template.omwgame.
+# Names with spaces in DATA are fine; ARCHIVES/FILES entries cannot contain spaces.
+_rig_content_get() {   # _rig_content_get <name> <DATA|ARCHIVES|FILES>
+    local key="RIG_CONTENT_${1}_$2"
+    if [ -n "${!key:-}" ]; then printf '%s' "${!key}"; return; fi
+    if [ "$1" = example ]; then
+        case $2 in DATA) printf '%s' "${EXAMPLE_SUITE:-}";; FILES) [ -n "${EXAMPLE_SUITE:-}" ] && printf '%s' template.omwgame;; esac
+    fi
+}
+# rig_content_check <name> — print one line per problem, each naming the rig.conf key; return 1 if any.
+rig_content_check() {
+    local n=$1 data files arch f bad=0
+    data=$(_rig_content_get "$n" DATA); files=$(_rig_content_get "$n" FILES); arch=$(_rig_content_get "$n" ARCHIVES)
+    if [ -z "$data" ]; then echo "RIG_CONTENT_${n}_DATA: not set (content profile '$n' needs its data directory)"; return 1; fi
+    [ -d "$data" ] || { echo "RIG_CONTENT_${n}_DATA: no such directory: $data"; return 1; }
+    [ -n "$files" ] || { echo "RIG_CONTENT_${n}_FILES: not set (list the content files under $data in load order)"; bad=1; }
+    for f in $files; do
+        [ -n "$(find "$data/" -maxdepth 1 -iname "$f" -print -quit 2>/dev/null)" ] \
+            || { echo "RIG_CONTENT_${n}_FILES: $f not found under RIG_CONTENT_${n}_DATA ($data)"; bad=1; }
+    done
+    for f in $arch; do
+        [ -n "$(find "$data/" -maxdepth 1 -iname "$f" -print -quit 2>/dev/null)" ] \
+            || { echo "RIG_CONTENT_${n}_ARCHIVES: $f not found under RIG_CONTENT_${n}_DATA ($data)"; bad=1; }
+    done
+    return "$bad"
+}
+# rig_use_content <name> — select a content profile for this run: writes the server's
+# requiredDataFiles.json (rig_set_required_datafiles, FILES in order) and the clients' content block
+# (rig_add_content). Dies with the offending rig.conf key if the profile is incomplete. Returns 4
+# instead of dying when RIG_CONTENT_SOFT=1, so a runner can report "content missing" as a skip.
+rig_use_content() {
+    local n=${1:?rig_use_content: need a content profile name} msg data f
+    local -a lines=() files=()
+    if ! msg=$(rig_content_check "$n"); then
+        [ "${RIG_CONTENT_SOFT:-0}" = 1 ] && { echo "$msg" >&2; return 4; }
+        rig_die "content profile '$n': ${msg//$'\n'/; }"
+    fi
+    data=$(_rig_content_get "$n" DATA)
+    read -r -a files <<<"$(_rig_content_get "$n" FILES)"
+    lines+=("data=\"$data\"")
+    for f in $(_rig_content_get "$n" ARCHIVES); do lines+=("fallback-archive=$f"); done
+    for f in "${files[@]}"; do lines+=("content=$f"); done
+    rig_set_required_datafiles "${files[@]}"
+    rig_add_content "$n" "${lines[@]}"
 }
 
 rig_start_xvfb() {
@@ -353,8 +456,21 @@ rig_start_server() {
     # regression), so stdout is the only reliable, always-fresh source. This
     # also kills the stale-log hazard: rig_server_log used to `ls -t` a shared glob and could serve
     # a PRIOR run's log — the false-RED that masked a passing scenario ().
-    RIG_SRV_STDOUT=$(mktemp "${TMPDIR:-/tmp}/mp-rig-server-XXXXXX.log")
-    "$RIG_BUILD/${RIG_SERVER_BIN}" >"$RIG_SRV_STDOUT" 2>&1 & RIG_SRV=$!
+    # In a run dir it is <run>/server.log (server-2.log, ... on a restart within the run).
+    local -a srvenv=()
+    if [ -n "$RIG_RUN_DIR" ] && [ -d "$RIG_RUN_DIR" ]; then
+        local n=1; RIG_SRV_STDOUT=$RIG_RUN_DIR/server.log
+        while [ -e "$RIG_SRV_STDOUT" ]; do n=$((n+1)); RIG_SRV_STDOUT=$RIG_RUN_DIR/server-$n.log; done
+    else
+        RIG_SRV_STDOUT=$(mktemp "${TMPDIR:-/tmp}/mp-rig-server-XXXXXX.log")
+    fi
+    # Run-scoped server config (rig_set_server_home): the server reads its user cfg and writes its own
+    # log under XDG_CONFIG_HOME/openmw — both inside the run dir, never the user's ~/.config.
+    if [ -n "$RIG_SRV_HOME" ]; then
+        _rig_write_server_cfg
+        srvenv=("XDG_CONFIG_HOME=$RIG_SRV_HOME/config" "XDG_DATA_HOME=$RIG_SRV_HOME/data")
+    fi
+    env "${srvenv[@]+"${srvenv[@]}"}" "$RIG_BUILD/${RIG_SERVER_BIN}" >"$RIG_SRV_STDOUT" 2>&1 & RIG_SRV=$!
     sleep "$RIG_SERVER_LOAD"
 }
 
@@ -373,7 +489,8 @@ rig_make_profile() {
 _rig_boot() {
     local clilog=$1 prof=$2 disp=$3
     local -a libenv=()
-    [ -d "$RIG_MYGUI_FIXED" ] && libenv=("LD_LIBRARY_PATH=$RIG_MYGUI_FIXED")
+    _rig_profile_content "$prof"
+    [ -n "$RIG_MYGUI_FIXED" ] && [ -d "$RIG_MYGUI_FIXED" ] && libenv=("LD_LIBRARY_PATH=$RIG_MYGUI_FIXED")
     # OpenMW 0.49's OSG plugin checker aborts the client unless OSG_LIBRARY_PATH lets
     # osgDB::listAllAvailablePlugins() see the plugins (its default path list omits Debian's
     # multiarch dir); OSG appends "osgPlugins-<ver>" per entry, so point at the parent lib dir.
@@ -590,7 +707,8 @@ rig_wait_stable() {
 # callers that did not start a server here.
 rig_server_log() {
     if [ -n "${RIG_SRV_STDOUT:-}" ] && [ -f "$RIG_SRV_STDOUT" ]; then echo "$RIG_SRV_STDOUT"; return; fi
-    ls -t "$RIG_PROFILE"/data/openmw/${RIG_SERVER_BIN}-*.log ~/.config/openmw/${RIG_SERVER_BIN}-*.log 2>/dev/null | head -1
+    ls -t ${RIG_SRV_HOME:+"$RIG_SRV_HOME"/config/openmw/"${RIG_SERVER_BIN}"-*.log} \
+          "$RIG_PROFILE"/data/openmw/"${RIG_SERVER_BIN}"-*.log ~/.config/openmw/"${RIG_SERVER_BIN}"-*.log 2>/dev/null | head -1
 }
 
 # Screenshot the whole root window of a display to $RIG_SHOTDIR/<name>.png, record the wall-clock

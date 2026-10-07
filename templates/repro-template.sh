@@ -16,14 +16,17 @@ source "$DIR/../lib/rig.sh"
 trap rig_cleanup EXIT
 
 PLAYER_NAME=${PLAYER_NAME:-ReproTester}
-CLILOG=/tmp/mp-rig-repro-client.log
+rig_run_dir "$(basename "${0%.sh}")" >/dev/null     # this run's dir under $RIG_RUNS
+CLILOG=$RIG_RUN_DIR/client.log
 
 # TODO 1 — server-side condition. Install a custom server-script hook that sets up the exact state
 #   the feature needs. The robust pattern (see the combat/summon/spell-effect examples in
 #   docs/FEATURE-TESTS.md): a one-off chat command that MODIFIES THE CALLER server-side
 #   (max/adjust skills, attributes, health; grant a scroll + quick-key; spawn an actor) via the
 #   CoreScripts API, so the blessed fixture stays untouched and rig_load_scenario clears what the run
-#   saves. Wire it from CoreScripts/scripts/customScripts.lua. Rig artifact to remember: a headless
+#   saves. Put the hook in an overlay dir next to this script — overlay/scripts/custom/my-hook.lua plus
+#   overlay/scripts/customScripts.lua.append holding `require("custom/my-hook")` — and pass it to
+#   rig_corescripts_overlay below; your CoreScripts clone is never edited. Rig artifact to remember: a headless
 #   client that never sends ID_PLAYER_CELL_STATE leaves the server's LoadedCells empty, so
 #   CLIENT_GAMEPLAY object packets are rejected ("impossible packetOrigin for unloaded <cell>") —
 #   force a LoadCell around any server-side object placement.
@@ -31,18 +34,15 @@ CLILOG=/tmp/mp-rig-repro-client.log
 # TODO 2 — fresh state. Either load a blessed fixture (rig_load_scenario "$FIXTURE") or remove this
 #   player's server-side json so the run is deterministic and the returning-player password dialog
 #   doesn't stall login:
-#   rm -f "$RIG_CORESCRIPTS"/data/player/"$PLAYER_NAME".json
+#   rm -f "$RIG_CORESCRIPTS"/data/player/"$PLAYER_NAME".json   (after rig_corescripts_overlay: the work copy)
 
+rig_corescripts_overlay "$RIG_RUN_DIR/corescripts"   # add "$DIR/overlay" once TODO 1 has a hook
 rig_check_prereqs
 rig_require_clean
 rig_set_server_home
-# Content: free example-suite (no game data) OR real game data. For real Morrowind you MUST pass the
-# BSA archives as fallback-archive= lines (OpenMW does not auto-load .bsa from a data dir):
-#   rig_set_required_datafiles Morrowind.esm Tribunal.esm Bloodmoon.esm
-#   rig_add_content mw "data=$MW_DATA" "fallback-archive=Morrowind.bsa" \
-#       "fallback-archive=Tribunal.bsa" "fallback-archive=Bloodmoon.bsa" \
-#       "content=Morrowind.esm" "content=Tribunal.esm" "content=Bloodmoon.esm"
-# See docs/WRITING-SCENARIOS.md "Testing with real game data".
+# Content: a profile from rig.conf (RIG_CONTENT_<name>_DATA/_ARCHIVES/_FILES) — free example-suite
+# (example) or real game data (e.g. mw). See docs/WRITING-SCENARIOS.md §4 "Content profiles".
+rig_use_content "${CONTENT:-example}"
 
 rig_make_profile
 rig_start_xvfb

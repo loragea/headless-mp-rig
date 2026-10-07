@@ -24,24 +24,26 @@ REPO=$(cd "$DIR/.." && pwd)
 source "$REPO/lib/rig.sh"
 
 EX=$REPO/scenarios/example
-CLILOG_A=/tmp/mp-rig-example-a.log
-CLILOG_B=/tmp/mp-rig-example-b.log
-rm -f "$CLILOG_A" "$CLILOG_B"
-
-# Reference sets live under the scenario dir. These MUST be exported BEFORE sourcing logcheck.sh /
-# compare.sh, which read them (LOG_REF_DIR, LOG_MARKERS, REF_DIR, MANIFEST) at source time.
-export RIG_LOG_REF_DIR=$EX/reference-logs
-export RIG_REF_DIR=$EX/reference-images
-export RIG_REF_MANIFEST=$EX/reference-images/manifest.tsv
-# Narrow, deterministic server-log signature vocabulary for THIS scenario (+ error tripwires that
-# must stay ABSENT). Excludes volatile noise (master-server retries, world-time ticks, the
-# neighbour-cell authority spam, the DedicatedPlayer position stream).
-export RIG_LOG_MARKERS='was allowed to connect|Creating new player|example-suite-compat|Authority of cell 0, -7 is now a|script error|Server crash from script error|bad argument|luabridge'
+# Everything this run writes goes under its own run dir ($RIG_RUNS/<stamp>-example/): client logs,
+# shots/, review/, the server log and the run-scoped server config. The build dir and the CoreScripts
+# clone are only read.
+rig_run_dir example >/dev/null
+CLILOG_A=$RIG_RUN_DIR/client-a.log
+CLILOG_B=$RIG_RUN_DIR/client-b.log
+RIG_SHOTDIR=$RIG_RUN_DIR/shots
 
 # shellcheck source=../lib/logcheck.sh
 source "$REPO/lib/logcheck.sh"
+# shellcheck source=../lib/compare.sh
 source "$REPO/lib/compare.sh"
 trap rig_cleanup EXIT
+# This scenario's reference sets (review output defaults to $RIG_RUN_DIR/review). The server-log
+# signature vocabulary is narrow and deterministic (+ error tripwires that must stay ABSENT); it
+# excludes volatile noise (master-server retries, world-time ticks, the neighbour-cell authority spam,
+# the DedicatedPlayer position stream).
+compare_set_refs  "$EX/reference-images"
+logcheck_set_refs "$EX/reference-logs" '' \
+    'was allowed to connect|Creating new player|example-suite-compat|Authority of cell 0, -7 is now a|script error|Server crash from script error|bad argument|luabridge'
 
 # cshot <display> <name> <crop-geom> — capture a display, crop to a region, echo the cropped PNG path.
 # Used for the STATIC blessed frame: crop to a stable GUI region (see docs/VERIFICATION.md and
@@ -53,26 +55,18 @@ cshot() { local d=$1 n=$2 geom=$3; local out=$RIG_SHOTDIR/$n.png
           printf '%s\t%s\n' "$n" "$(date +%s.%N)" >> "$RIG_SHOTDIR/captures.tsv"
           echo "$out"; }
 
-# ---- 1. Build a throwaway CoreScripts work-copy with the example-suite compat overlay ------------
-# The shared CoreScripts clone is never modified (all writes stay inside headless-mp-rig). The
-# overlay's compat shim keeps stock CoreScripts from crashing on non-Morrowind content.
-SHARED_CS=$RIG_CORESCRIPTS
-WORK_CS=/tmp/mp-rig-example-cs
-rm -rf "$WORK_CS"; mkdir -p "$WORK_CS/data"
-cp -a "$SHARED_CS/scripts" "$SHARED_CS/lib" "$WORK_CS/"
-for s in $RIG_STATE_SUBDIRS; do mkdir -p "$WORK_CS/data/$s"; done
-cp "$SHARED_CS/data/banlist.json" "$WORK_CS/data/" 2>/dev/null || echo '[]' > "$WORK_CS/data/banlist.json"
-cp "$EX/coreScripts-overlay/scripts/custom/example-suite-compat.lua" "$WORK_CS/scripts/custom/"
-cp "$EX/coreScripts-overlay/scripts/customScripts.lua" "$WORK_CS/scripts/"
-export RIG_CORESCRIPTS="$WORK_CS"
-export RIG_SETTINGS_SRC="$EX/settings.cfg"    # [Models] remap so the client finds BasicPlayer.dae
+# ---- 1. Throwaway CoreScripts work copy with the example-suite compat overlay ---------------------
+# rig_corescripts_overlay copies the CoreScripts clone into the run dir, adds the rig's server bridge,
+# then this scenario's overlay (its customScripts.lua replaces the stock one so the server loads only
+# the compat shim; the shim keeps stock CoreScripts from crashing on non-Morrowind content).
+rig_corescripts_overlay "$RIG_RUN_DIR/corescripts" "$EX/coreScripts-overlay"
+RIG_SETTINGS_SRC="$EX/settings.cfg"           # [Models] remap so the client finds BasicPlayer.dae
 
 # ---- 2. Content + fixture -----------------------------------------------------------------------
 rig_check_prereqs
 rig_require_clean
-rig_set_server_home
-rig_set_required_datafiles template.omwgame          # prepends builtin.omwscripts (client entry 0)
-rig_add_content example "data=$EXAMPLE_SUITE" "content=template.omwgame"
+rig_set_server_home                                  # run-scoped tes3mp-server.cfg -> the work copy
+rig_use_content example                              # RIG_CONTENT_example_* (requiredDataFiles + client content block)
 rig_load_scenario "$EX"                              # restores player/a.json + player/b.json fresh
 
 # ---- 3. Boot server + two clients ----------------------------------------------------------------
@@ -160,7 +154,7 @@ fi
 # STATIC frame: b's minimap crop must match the blessed reference within its manifest tolerance.
 if [ "${UPDATE_REFS:-0}" = 1 ]; then
     if promote_shot 20-b-minimap "$SHOT_B"; then pass "STATIC reference (re-)blessed"; else fail "STATIC bless failed (candidate '$SHOT_B')"; fi
-elif [ -f "$RIG_REF_DIR/20-b-minimap.png" ]; then
+elif [ -f "$REF_DIR/20-b-minimap.png" ]; then
     if compare_shot 20-b-minimap "$SHOT_B"; then pass "STATIC frame within tolerance"
     else fail "STATIC frame regression (see diff — real change, or re-bless with UPDATE_REFS=1)"; fi
 else
@@ -168,5 +162,5 @@ else
 fi
 
 echo "===================================="
-if [ "$FAILS" -eq 0 ]; then echo "RESULT: GREEN — example scenario passed ($SRV)"; exit 0
-else echo "RESULT: RED — $FAILS assertion(s) failed"; exit 1; fi
+if [ "$FAILS" -eq 0 ]; then echo "RESULT: GREEN — example scenario passed (run dir $RIG_RUN_DIR)"; exit 0
+else echo "RESULT: RED — $FAILS assertion(s) failed (run dir $RIG_RUN_DIR)"; exit 1; fi
