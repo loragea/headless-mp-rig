@@ -153,9 +153,9 @@ must-get-right details:
    by default. For an *older* client that does not auto-load it, set `RIG_RDF_BUILTIN=0` to omit the
    prepend (otherwise the list is index-shift-rejected).
 
-Pick a start cell **off** the game's default spawn cell if it has hazards — e.g. Morrowind's census
-cell has invisible collision boxes and a hostile mudcrab that shove players ~1400 units and wreck
-determinism.
+Pick a start cell **off** the game's default spawn cell if it has hazards — a character-creation
+start cell can hold invisible collision boxes or a hostile creature that shove players far from
+their saved positions and wreck determinism.
 
 ---
 
@@ -247,7 +247,7 @@ scenario** — isolate it:
   (see [KB-15-screen-stability-wait](cookbook/KB-15-screen-stability-wait.md)) and keep a
   fresh-client retry.
 - **Suppress vanity for the whole run** (§5) — it is the usual cause of "camera non-determinism".
-- **Interior light sources flicker by design** in some games (Morrowind), which makes full-frame
+- **Interior light sources flicker by design** in some games, which makes full-frame
   perceptual-hash screenshots bimodal — prefer stable-lighting venues for full-frame STABLE shots, or
   crop the shot to the GUI element it actually asserts (see VERIFICATION and
   [KB-19-phash-bimodal-crop-gui-rmse](cookbook/KB-19-phash-bimodal-crop-gui-rmse.md)).

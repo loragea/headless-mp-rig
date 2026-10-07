@@ -18,7 +18,7 @@
 #   * A stale Xvfb on the display (carrying an Xauthority) makes the auth-less Xvfb lose the race
 #     and xdotool gets "Authorization required" — kill it + rm the lock first.
 #
-# Per-display model (validated 2026-06-19): each client gets its OWN Xvfb display, because a shared
+# Per-display model: each client gets its OWN Xvfb display, because a shared
 # Xvfb has no window manager (so `xdotool windowactivate` fails — there is no _NET_ACTIVE_WINDOW) and
 # two 800x600 windows overlap (the occluded one captures as garbage, X11 has no backing store without a
 # compositor). One window per display ⇒ input/capture target it by setting DISPLAY=, with NO focus
@@ -347,7 +347,8 @@ rig_login() {
 }
 
 # Drive a FRESH player through login + the full TES3MP character generation on its display, ending
-# in-world (decided 2026-06-19: drive chargen every run rather than pre-bake returning-player jsons).
+# in-world. Driving chargen creates the player from scratch, so no pre-baked returning-player json is
+# needed.
 # The validated sequence (TES3MP MP-chargen, where Return activates each dialog's default/OK button —
 # only the class-METHOD picker has no default and needs the one mouse click):
 #   name -> Return  (fresh acct: -> "create password" box)
@@ -406,9 +407,9 @@ rig_wait_event() {
 
 # EVENT-GATE the client boot: wait for each client log's world-load milestone instead of a blind
 # RIG_WORLD_LOAD sleep. Milestone = 'Sending ID_PLAYER_MAP' — the client emits it once, right as the
-# initial world load completes; the connect/name box is up within a few seconds of it (verified by
-# screenshot-poll 2026-07-01: milestone at 6-9s even with 3 clients booting in parallel, name box
-# visible <=4-7s later; the old fixed sleep was 50s). After ALL milestones, settle RIG_BOOT_SETTLE.
+# initial world load completes; the connect/name box is up within a few seconds of it (measured by
+# polling screenshots: the milestone arrives 6-9s after launch even with 3 clients booting in
+# parallel, and the name box is visible 4-7s later, where a fixed boot sleep needs ~50s). After ALL milestones, settle RIG_BOOT_SETTLE.
 # On a milestone timeout (cap RIG_BOOT_CAP) warn and proceed — the phase asserts catch a dead client.
 # $@ = the client log files.
 rig_wait_boot() {
