@@ -19,7 +19,9 @@ authoritative state change from the logs / saves**, not a screenshot.
    real guard and a weak one is asserting the *authoritative* side.
 4. **Poll logged values, never single-grep them** — the server's captured stdout is block-buffered, so
    an immediate grep races the unflushed buffer and reads empty (a false fail). `rig_wait_event`
-   already polls; read your own logged values the same way.
+   already polls; read your own logged values the same way. When you read a value *after* a change,
+   require it to differ from the baseline in the expected direction (e.g. health strictly below
+   base), so a stale pre-change batch can't satisfy the read.
 
 Two engine facts that shape these tests:
 - **Login order sets cell authority** (first player into a cell owns it) — choreograph the
@@ -57,6 +59,8 @@ Two engine facts that shape these tests:
   player's own client; the server value is synced *from* the victim and relayed identically to every
   loaded client, so it's exactly what the attacker's client sees too. Reading it (plus the persisted
   json) proves the victim applied the damage — the thing a desync would break.
+- **No PvP switch is involved:** player-to-player damage applies on the victim's own client and the
+  server only relays it, so no server-side PvP toggle needs enabling for this test.
 
 ## 2. Summon lifecycle + caster identity
 
@@ -96,7 +100,8 @@ still logs the name).
   out-of-combat recipe at the victim.
   **Prime the quick-key first** — a scroll quick-key sends an item-use packet that waits for server
   approval, so open+close the inventory once and settle before the cast, else early-after-login the
-  round-trip isn't ready and the click falls through to a plain activate.
+  round-trip isn't ready and the click falls through to a plain activate. Don't toggle the inventory
+  inside the cast-retry loop: a stray toggle leaves it open and it swallows the quick-key and click.
 - **Assertions:**
   - **Off the wire:** a server-side `OnPlayerSpellsActive` handler logs the per-effect id/arg from the
     victim's incoming `ID_PLAYER_SPELLS_ACTIVE` packet — assert the exact id **and** arg (e.g.
@@ -118,7 +123,7 @@ active-effect surface — with **no screenshot needed** (every link is logged).
   spell <scroll> to <victim>` (the effect applied) → the hit-sound relay (`played sound …`). If a
   relay line has two engine code paths and only one emits it (an internal race), **don't assert that
   line** — assert the state change and cover the relay layer through a vehicle that deterministically
-  takes the emitting path.
+  takes the emitting path ([KB-18-two-path-log-line-race](cookbook/KB-18-two-path-log-line-race.md)).
 
 ---
 
