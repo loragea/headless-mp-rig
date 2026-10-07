@@ -27,8 +27,18 @@
 #
 # Config (override via env before sourcing, set the RIG_* vars after, or edit rig.conf).
 # Load rig.conf (copy it from rig.conf.example) if present — it sets binary names, build dir, paths.
+# A variable already set when the rig is sourced (e.g. `RIG_BUILD=/other/build ./your-test.sh`) wins
+# over the same key in rig.conf, so a one-off override never needs a conf edit.
 _RIG_LIB_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
-[ -f "${RIG_CONF:-$_RIG_LIB_DIR/../rig.conf}" ] && source "${RIG_CONF:-$_RIG_LIB_DIR/../rig.conf}"
+_rig_load_conf() {
+    local conf=$1 key keep=()
+    while IFS= read -r key; do
+        [ -n "${!key+x}" ] && keep+=("$key=${!key}")
+    done < <(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/p' "$conf")
+    source "$conf"
+    for key in "${keep[@]+"${keep[@]}"}"; do printf -v "${key%%=*}" '%s' "${key#*=}"; done
+}
+[ -f "${RIG_CONF:-$_RIG_LIB_DIR/../rig.conf}" ] && _rig_load_conf "${RIG_CONF:-$_RIG_LIB_DIR/../rig.conf}"
 RIG_ROOT=${RIG_ROOT:-$(cd "$_RIG_LIB_DIR/.." && pwd)}
 RIG_BUILD=${RIG_BUILD:-$RIG_ROOT/build}                      # dir holding the client + server binaries (SET THIS)
 RIG_CLIENT_BIN=${RIG_CLIENT_BIN:-tes3mp}                     # client executable name inside $RIG_BUILD

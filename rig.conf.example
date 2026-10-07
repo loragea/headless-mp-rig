@@ -1,6 +1,7 @@
 # rig.conf.example — copy to rig.conf and edit for your build, then the rig auto-loads it.
 #   cp rig.conf.example rig.conf   &&   $EDITOR rig.conf
-# Every value here is also overridable as an environment variable (RIG_* wins if exported).
+# Every value here is also overridable as an environment variable: a variable already set when the
+# rig is sourced wins over the same key here.
 # lib/rig.sh sources ../rig.conf automatically; point elsewhere with RIG_CONF=/path/to/rig.conf.
 
 # --- Your build (REQUIRED) --------------------------------------------------------------------
