@@ -20,12 +20,16 @@ directory (`$RIG_RUNS/<stamp>-example/example/`) holds `steps.tsv` (one row per 
 The choreography is `steps.sh`; the metadata (players, passwords, content profile, overlay,
 signature vocabulary) is `scenario.conf`. In one run:
 
-1. **Both clients are admitted** — server logs `Client was allowed to connect` ×2.
-2. **Cell authority** — the first player in (`a`) owns the shared cell: `Authority of cell 0, -7 is now a`.
-3. **Mutual cross-client visibility** (the bug class this whole rig exists to catch): client `a`'s
-   log names `DedicatedPlayer b`, client `b`'s log names `DedicatedPlayer a`.
-4. **No server error** — `assert absent server "$RIG_TRIPWIRES"`.
-5. **Server-log signature** — `reference-logs/example-server.events` (6 normalized events: both
+1. **Cell authority** — right after `login a`, the server logs `Authority of cell 0, -7 is now a`
+   (the first player in owns the shared cell).
+2. **Mutual cross-client visibility** (the bug class this whole rig exists to catch): right after
+   `login b`, client `a`'s log names `DedicatedPlayer b` and `b (N) has joined the server`, and
+   client `b`'s log names `DedicatedPlayer a`.
+3. **Both clients are admitted** — server logs `Client was allowed to connect` ×2.
+4. **Nobody drowned** — neither client log has `committed suicide` (the water-breathing fixture
+   holds).
+5. **No server error** — `assert absent server "$RIG_TRIPWIRES"`.
+6. **Server-log signature** — `reference-logs/example-server.events` (6 normalized events: both
    connects, both player creations, the compat shim's line, the authority line). A moved signature is
    a `REGRESSION` (exit 2).
 

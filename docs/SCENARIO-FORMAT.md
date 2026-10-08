@@ -29,7 +29,7 @@ outside this list fails, except `P_<NAME>` (upper case, digits, `_`).
 |---|---|---|
 | `NAME` | scenario name; names the run subdirectory and the `RESULT` line | directory name |
 | `PURPOSE` | one sentence: what the scenario proves | — |
-| `PLAYERS` | login names in slot order: slot 1 → `RIG_DISPLAY`, 2 → `RIG_DISPLAY2`, 3 → `RIG_DISPLAY3` | required |
+| `PLAYERS` | login names in slot order, at most 3, each letters, digits or `_`: slot 1 → `RIG_DISPLAY`, 2 → `RIG_DISPLAY2`, 3 → `RIG_DISPLAY3` | required |
 | `PASSWORDS` | passwords in the same order | each player's name |
 | `TAGS` | free-form words; `bin/rig run --tag` selects on them, the rig never interprets them | — |
 | `CONTENT` | a content profile from `rig.conf` (`RIG_CONTENT_<name>_*`) | required |
@@ -50,7 +50,22 @@ Relative paths (`FIXTURE`, `OVERLAY`, `SETTINGS`) are relative to the scenario d
 
 `steps.sh` is bash restricted to verbs, `local`, variables and `if`/`for`/`case`: no pipes,
 subshells, redirections or external commands. Players are **names** from `PLAYERS`. Every verb call
-is one row in `steps.tsv` carrying `steps.sh:<line>`.
+is one row in `steps.tsv` carrying `steps.sh:<line>`. Things the shell will not tell you:
+
+- Quote every argument that holds spaces or shell operators: `assert count server 'x' '>=' 2`. An
+  unquoted `>=` is a redirection; `bin/rig lint` catches it.
+- `steps.sh` runs under `set -u`: an unset variable (a misspelled `$P_NAME`) aborts it, and the run
+  is `INFRA` "steps.sh aborted".
+- The verbs `type` and `wait` replace the bash builtins of the same names inside `steps.sh` and
+  `hooks.sh`.
+- Verbs are not conditions: a `FAIL` row counts even inside an `if`.
+- The fixture the players resume comes from a played session: [WRITING-SCENARIOS.md](WRITING-SCENARIOS.md) §1–2.
+- The only server-log lines the rig itself guarantees on every fork are its bridge's:
+  `[rig-bridge] loaded; data path …`, `[rig-bridge] player <p> in (pid N)`, `… out (pid N)`.
+  Everything else is your build's and your scripts' logging.
+
+`bin/rig lint <dir>` checks all of this without booting: the conf keys, every verb's arguments, an
+external command or redirection, a `--since` without an earlier `mark`, and shellcheck.
 
 ### 3.1 Log windows
 
@@ -92,7 +107,9 @@ Use it only for lines that can occur once per run.
 | `settle <secs> "<reason>"` | sleep; the reason is required (a call without one fails) |
 
 **A failed `boot` or `login` stops the scenario**: that row is `FAIL`, every later verb is
-recorded `SKIP`, the RESULT is `INFRA`, exit 3.
+recorded `SKIP`, the RESULT is `INFRA`, exit 3. So does a server or client process that died: the
+next verb records the `INFRA` row and names the log to read. `login <p> fresh` assumes the stock
+TES3MP character-generation dialog sequence.
 
 ### 3.3 Input
 
@@ -140,10 +157,10 @@ Each records `PASS` or `FAIL` and never aborts the scenario.
 | `assert count server <fixed> <op> <n>` / `assert count client <p> <fixed> <op> <n>` | whole log, `grep -cF`; ops `= == != < <= > >=`, **quoted** (`'>='`: unquoted, `>` is a shell redirection) |
 | `assert probe …`, `assert probe-delta …` | probe not available yet: `SKIP` |
 | `assert json <relpath> '<python expression>'` | `python3 -I`; `d` is the parsed JSON document at `<work copy>/data/<relpath>`; truthy = `PASS` |
-| `shot <p> <name> [crop]` | capture to `shots/<name>.png`. A blessed `reference-images/<name>.png` → compared (over tolerance: `REGRESSION`). None → `UNBLESSED` (exit 0); under `--strict-refs` → `NO-REFERENCE` (counts as a failure). A shot used only as a `pair` input is `OK`. |
+| `shot <p> <name> [crop]` | capture to `shots/<name>.png`. A blessed `reference-images/<name>.png` → compared (over tolerance: `REGRESSION`). None → `UNBLESSED` (exit 0); under `--strict-refs` → `NO-REFERENCE` (counts as a failure). A shot used only as a `pair` input is `OK` in the final `steps.tsv` (`run.log`, written live, still shows `UNBLESSED`). A cropped shot compares against a reference of the cropped size; a size mismatch is a `REGRESSION`. |
 | `pair <name> <A> <B> [metric] [floor]` | shots A and B must differ: metric ≥ floor (default: the manifest row `<name>`, else `RMSE 0.02`) |
 | `signature [name]` | the server log's event signature against `reference-logs/<name>.events` with `LOG_MARKERS` (default name: `NAME`); differs → `REGRESSION`; none → `UNBLESSED` / `NO-REFERENCE` |
-| `checkpoint <name> [sp\|mp-only] [divergent]` | a full-screen shot per logged-in player into `checkpoints/<name>/`, plus a placeholder `<p>.probe` until the probe exists |
+| `checkpoint <name> [sp\|mp-only] [divergent]` | a full-screen shot per logged-in player into `checkpoints/<name>/`, plus a placeholder `<p>.probe` until the probe exists; the mode words are recorded for a later single-player comparison and change nothing now |
 
 ### 3.7 Misc
 
@@ -172,10 +189,17 @@ bin/rig run <dir>... | --tag T | --all  [--out DIR] [--capture] [--strict-refs] 
 - `--retry-failed N` — re-run a scenario whose RESULT is `FAIL`, `REGRESSION` or `INFRA`, up to
   N times; earlier attempts move to `attempt-<k>/`; a pass on a retry is `PASS-RETRY`.
 - `--dry-run` — no boot: `bash -n`, the conf key check, then `steps.sh` sourced with every verb
-  stubbed and `PATH` empty; an external command or unknown verb fails. Writes nothing.
+  stubbed, `PATH` empty and an empty working directory; an external command, unknown verb, bad
+  argument, redirection or unknown `--since` mark fails (exit 1). Writes nothing. `bin/rig lint`
+  adds path checks and shellcheck.
 - `--keep-up` — leave the server and clients running after the steps (one scenario only); implies
-  `--keep-work`. Tear down with `pkill -x <server-bin>; pkill -x <client-bin>; pkill -x Xvfb`.
+  `--keep-work`; refuses `--retry-failed`. Stop it with `bin/rig down`.
+- A run refuses to start (exit 3) while a server is already running; `bin/rig down` stops it.
 - `--keep-work` — keep the CoreScripts work copy (`RIG_KEEP_WORK=1`).
+
+The other commands (`bin/rig help <command>` for each): `list`, `new`, `lint`, `explain` (the
+failing steps of every attempt of a run with the file, byte window and line range to open),
+`rerun-failed`, `up` (a scenario's world left running for exploration) and `down`.
 
 ### 4.1 Exit codes and verdict
 

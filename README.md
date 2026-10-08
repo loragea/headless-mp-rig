@@ -19,62 +19,97 @@ each one sees.
 ## Requirements
 
 - Linux with **Xvfb**, **xdotool**, **ImageMagick 7** (`magick`/`import`) and **python3**, plus
-  `bash`, `tar`, `procps` (`pgrep`/`pkill`); `unzip` only to import zipped server saves. No `jq`.
+  `bash`, `tar`, `procps` (`pgrep`/`pkill`); `shellcheck` for `bin/rig lint` (optional); `unzip` only
+  to import zipped server saves.
 - A compiled **client + dedicated server** of your OpenMW-MP build, and its **server-side Lua
   scripts** (TES3MP CoreScripts or your fork's).
-- For the graphics gate: a working GL (software `llvmpipe` is fine, just slow).
-- Optional but recommended: a Release-built MyGUI to shadow a broken distro MyGUI (see
-  `docs/WRITING-SCENARIOS.md` → "invisible UI").
+- A working GL (software `llvmpipe` is fine, just slow).
+- For the example: OpenMW's free **example-suite** content
+  (`git clone --depth 1 https://gitlab.com/OpenMW/example-suite`).
+- Optional: a Release-built MyGUI to shadow a broken distro MyGUI (`RIG_MYGUI_FIXED`;
+  `docs/WRITING-SCENARIOS.md` §6, "invisible UI").
 
 ## Quickstart
 
+**1. Configure** (2 minutes). Every key is listed and commented in `rig.conf.example`.
+
 ```sh
-cp rig.conf.example rig.conf      # then edit: point RIG_BUILD at your build, set the binary names,
-$EDITOR rig.conf                  # name your content (RIG_CONTENT_<name>_*)
-bin/rig doctor                    # checks every key; each problem names the key to fix
-
-# sanity-check the verification libs with no game data needed:
-lib/compare.sh selftest
-lib/logcheck.sh selftest
-lib/scenario.sh selftest
-
-# run the worked example — two real clients in one world on FREE example-suite content, cross-client
-# sync asserted from the logs (green exit 0 / red non-zero). A full run takes a few minutes on
-# software GL; run it directly (or under your CI's long-job runner). See scenarios/example/README.md.
-# Everything a run writes lands in its own dir under RIG_RUNS (default runs/); your build dir and your
-# CoreScripts clone are only read.
-bin/rig run scenarios/example     # scenario format: docs/SCENARIO-FORMAT.md
-
-# author + run a targeted feature test (see docs/FEATURE-TESTS.md):
-cp templates/repro-template.sh my-test.sh
-$EDITOR my-test.sh                # fill in the four TODO blocks
-./my-test.sh
-
-# probe an unknown headless action interactively:
-FIXTURE=scenarios/example OVERLAY=scenarios/example/coreScripts-overlay PLAYER=a \
-    templates/explore-client.sh   # boots a client and stays up
+cp rig.conf.example rig.conf
+$EDITOR rig.conf      # RIG_BUILD (dir with the client + server binaries and the client's openmw.cfg),
+                      # RIG_CLIENT_BIN / RIG_SERVER_BIN if your fork renamed them, RIG_CORESCRIPTS,
+                      # RIG_CONTENT_example_DATA = <example-suite>/game_template/data
+bin/rig doctor        # every problem names the rig.conf key or the package to fix; exit 0 = ready
 ```
+
+**2. Run the example** (2-4 minutes on software GL): two real clients join one server on free
+content and each sees the other.
+
+```sh
+bin/rig run scenarios/example
+```
+
+It prints one line per step and ends with `RESULT PASS 0 example …` and exit 0. Everything a run
+writes lands in its own directory under `RIG_RUNS` (default `runs/`), printed on the first line; your
+build dir and your CoreScripts clone are only read. `bin/rig list` shows the scenarios it finds.
+
+**3. Write your own** scenario: a directory with `scenario.conf` (players, content profile, fixture)
+and `steps.sh` (one verb per line).
+
+```sh
+bin/rig new scenarios/local/my-test --content example --players "a b"
+cp -r scenarios/example/player scenarios/example/coreScripts-overlay scenarios/example/settings.cfg \
+      scenarios/local/my-test/                  # a fixture (returning players a, b) + what the content needs
+$EDITOR scenarios/local/my-test/scenario.conf   # OVERLAY=coreScripts-overlay  SETTINGS=settings.cfg  PASSWORDS="a a"
+$EDITOR scenarios/local/my-test/steps.sh        # the verb table is at its top
+bin/rig lint scenarios/local/my-test            # seconds: conf keys, verbs, arguments, shellcheck
+bin/rig run scenarios/local/my-test
+```
+
+The three copied items are what the example-suite content needs (its README says why); on your own
+content you bring your own fixture (`docs/WRITING-SCENARIOS.md` §1-2). `scenarios/local/` is
+gitignored.
+
+**4. On a red run** (exit 1 fail, 2 regression, 3 infrastructure, 4 content missing):
+
+```sh
+bin/rig explain latest        # each failing step: its steps.sh line, the log window it searched,
+                              # the shot/reference/diff or signature diff to open
+bin/rig rerun-failed latest   # run what failed again
+```
+
+**5. Explore by hand** when you do not yet know how to drive an action headlessly:
+
+```sh
+bin/rig up scenarios/example  # boots the server and both clients, logs them in, stays up, prints
+                              # each display, pid and log
+DISPLAY=:99 xdotool key Return; DISPLAY=:99 import -window root shot.png
+bin/rig down                  # stops everything up (or a killed run) left running
+```
+
+`bin/rig help` lists the commands and `bin/rig help <command>` explains one.
 
 ## Layout
 
 ```
 rig.conf.example     copy to rig.conf; every key, commented: build, scripts, content profiles, runs, displays
-bin/rig              command front end: `bin/rig doctor` validates rig.conf and the host
+bin/rig              the command line: doctor, list, new, lint, run, explain, rerun-failed, up, down
+bin/run-example.sh   shorthand for `bin/rig run scenarios/example`
 lib/rig.sh           the rig: run dirs, CoreScripts work copy, boot server+clients, load fixtures, drive
                      input, event-gated waits, capture
+lib/scenario.sh      the runner: conf parser, verbs, log windows, verdict, run sets (+ selftest)
+lib/cli.sh           the authoring and diagnosis subcommands of bin/rig
 lib/compare.sh       screenshot regression compare (magick, per-image tolerance) — library + CLI + selftest
 lib/logcheck.sh      log event-signature compare (masked, ordered) — library + CLI + selftest
-bin/rig run          the scenario runner: scenario.conf + steps.sh -> one verdict (docs/SCENARIO-FORMAT.md)
-lib/scenario.sh      the runner's library: conf parser, verbs, log windows, verdict — + selftest
-bin/run-example.sh   shorthand for `bin/rig run scenarios/example`
 overlay/             the rig's server-side bridge, layered into every CoreScripts work copy
-templates/           starting points: repro-template.sh, explore-client.sh
-scenarios/           worked example fixtures + blessed references (free example-suite content)
+templates/scenario/  the scaffold `bin/rig new` copies
+scenarios/example/   the worked example: fixture, overlay, references (free example-suite content)
 docs/                the manuals (below)
 ```
 
 ## Documentation
 
+- **[docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md)** — the scenario directory, every
+  `scenario.conf` key, every `steps.sh` verb, log windows, exit codes and the run directory.
 - **[docs/WRITING-SCENARIOS.md](docs/WRITING-SCENARIOS.md)** — how to author a test: prepare a start
   state (position players, set spells/gear/skills, edit server save files), the fixture format,
   testing with **real game data** vs free content, avoiding the vanity camera, the action vocabulary,
@@ -92,8 +127,8 @@ docs/                the manuals (below)
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules and how to add a capability or recipe.
-CI runs shell lint plus the `lib/compare.sh` and `lib/logcheck.sh` selftests; none of it needs a game
-binary.
+CI runs shell lint, the three library selftests and `bin/rig lint` on the example and on a scaffolded
+scenario; none of it needs a game binary.
 
 ## License
 

@@ -3,7 +3,7 @@
 Every run produces two kinds of signal. Choose the weakest sufficient one for each assertion — a
 log gate beats a screenshot whenever the feature leaves a log trace.
 
-- **Logs — the deterministic gate.** Inline `rig_wait_event` asserts grep the server/client log for
+- **Logs — the deterministic gate.** `assert server|client` and `wait` verbs poll the server/client log for
   each feature's proof, and `lib/logcheck.sh` compares a normalized **event signature** of the whole
   run to a blessed one (catching a sync packet/callback that *stopped firing* — invisible to a
   screenshot, fatal to multiplayer).
@@ -64,9 +64,9 @@ Run `lib/logcheck.sh selftest` — synthetic logs prove identical→PASS, volati
 
 | Class | Use when | Mechanism | Verdict on miss |
 |---|---|---|---|
-| **Log-gated** | the outcome leaves a deterministic log line | `rig_wait_event` / log signature | hard fail |
-| **STATIC reference** | the outcome is a **stable** frame that must not change | `compare.sh` vs a blessed ref, per-image tolerance | regression |
-| **DYNAMIC pair** | the outcome is **visible but non-deterministic** (an NPC fighting, particles) | motion *between* two same-view frames must exceed a floor | floor miss |
+| **Log-gated** | the outcome leaves a deterministic log line | `assert server\|client`, `assert absent`, `assert count` / `signature` | hard fail |
+| **STATIC reference** | the outcome is a **stable** frame that must not change | `shot` vs `reference-images/<name>.png` (`compare.sh`), per-image tolerance | regression |
+| **DYNAMIC pair** | the outcome is **visible but non-deterministic** (an NPC fighting, particles) | `pair`: motion *between* two same-view `shot`s must exceed a floor | floor miss |
 
 - **Log-gated is the real PASS/FAIL gate** — prefer it always. Authority handoff, cell
   traversal/teleport, scroll/spell hits, inventory use, one client seeing another change cell.
@@ -104,7 +104,7 @@ a windy exterior.
   parens. Gate `≥ floor`.
 
 **Freak-frame handling.** A single instantaneous grab can catch a frame mid-render (a MyGUI fade-in,
-an un-drawn 3D preview) — a "freak" wildly off the ref. `capture`/`shot` helpers **re-grab** (up to a
+an un-drawn 3D preview) — a "freak" wildly off the ref. A capture helper may **re-grab** (up to a
 retry count, while the scene is still live) when a grab exceeds a *freak ceiling* that sits above
 normal jitter and below the freak band, handing the best frame to the unchanged compare. This never
 changes the verdict (compare is still vs the manifest **threshold**, not the ceiling), so it cannot
@@ -141,7 +141,9 @@ A screenshot or log-signature move is a **regression**, not an advisory. Resolve
 
 - **Regression** — a change broke something. **Fix the code**; the reference stays.
 - **Legitimate change** — the engine genuinely changed graphics / AI / the packet sequence. The
-  reference is stale and must be re-blessed (`promote_shot` / `promote_log`, and re-record which base
+  reference is stale and must be re-blessed: copy the run's candidate over the reference
+  (`shots/<name>.png` → `reference-images/<name>.png`, `review/<name>.events` → `reference-logs/`;
+  library tools call `promote_shot` / `promote_log`), and re-record which base
   moved it).
 
 Never re-bless unattended — a unilateral re-bless enshrines regressions and defeats the gate. Keep a

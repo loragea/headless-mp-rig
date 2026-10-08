@@ -1,16 +1,18 @@
 # Feature-specific tests
 
 Patterns for building a **targeted feature guard** — a deterministic headless reproduction that
-proves one multiplayer property holds (and reddens when a change breaks it). Start from
-`templates/repro-template.sh`. These are regression guards, not visual gates: **assert the
+proves one multiplayer property holds (and reddens when a change breaks it). Each is a scenario
+directory: start with `bin/rig new <dir> --content <profile> --players "f d"` and the verbs of
+[SCENARIO-FORMAT.md](SCENARIO-FORMAT.md). These are regression guards, not visual gates: **assert the
 authoritative state change from the logs / saves**, not a screenshot.
 
 ## The shared pattern
 
-1. **Provision state server-side, leaving the fixture untouched.** A one-off chat command (wired from
-   `CoreScripts/scripts/customScripts.lua`) modifies the caller via the CoreScripts API — max/adjust
-   skills, attributes, health; grant a scroll + quick-key; spawn an actor. Because `rig_load_scenario`
-   clears whatever a run saves, the blessed fixture stays pristine. This makes the outcome
+1. **Provision state server-side, leaving the fixture untouched.** A one-off chat command, shipped in
+   the scenario's `OVERLAY=` dir (`scripts/custom/<hook>.lua` plus `scripts/customScripts.lua.append`
+   holding `require("custom/<hook>")`) and called with `chat <p> "/cmd"`, modifies the caller via the
+   CoreScripts API — max/adjust skills, attributes, health; grant a scroll + quick-key; spawn an
+   actor. The fixture is reloaded fresh every run, so it stays pristine. This makes the outcome
    **deterministic** (a maxed weapon-skill + agility vs a low-evasion victim clamps hit chance to
    100%; a granted scroll always casts).
 2. **Drive the real action** from a real client (attack input, cast recipe from [cookbook/](cookbook/)).
@@ -18,8 +20,8 @@ authoritative state change from the logs / saves**, not a screenshot.
    id read off the wire, the despawn origin — not just "something happened". The difference between a
    real guard and a weak one is asserting the *authoritative* side.
 4. **Poll logged values, never single-grep them** — the server's captured stdout is block-buffered, so
-   an immediate grep races the unflushed buffer and reads empty (a false fail). `rig_wait_event`
-   already polls; read your own logged values the same way. When you read a value *after* a change,
+   an immediate grep races the unflushed buffer and reads empty (a false fail). `assert server` and
+   `wait server` poll up to their cap; give a slow line a longer cap (`assert server '<ERE>' 25`). When you read a value *after* a change,
    require it to differ from the baseline in the expected direction (e.g. health strictly below
    base), so a stale pre-change batch can't satisfy the read.
 
@@ -43,8 +45,7 @@ Two engine facts that shape these tests:
   and full fatigue, drops every other player's Agility/Luck, and **bulks their health** so a clean hit
   doesn't one-shot them mid-assert. Wielding a **real weapon** (not fists) drives the weapon-id `onHit`
   signature.
-- **Attack input:** draw the weapon (`F`), then `xdotool mousedown 1; sleep 0.7; mouseup 1` (charge +
-  release). A short forward `w` tap between swings closes melee reach. Hide chat first
+- **Attack input:** draw the weapon (`key f f`), then `hold f mouse1 0.7` (charge + release). A short forward `w` tap between swings closes melee reach. Hide chat first
   ([KB-4-hide-chat-window](cookbook/KB-4-hide-chat-window.md)) so the swing click isn't eaten.
 - **Health readout must be chat-independent.** A `/hpreport`-style command sent *after* hiding chat
   never dispatches (a hidden chat window won't open on the say-key). Instead log the pre-combat

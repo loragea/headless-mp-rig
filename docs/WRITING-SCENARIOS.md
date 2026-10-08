@@ -1,16 +1,21 @@
 # Writing scenarios
 
-A **scenario** is **saved server-state + scripted choreography**:
+A **scenario** is a directory holding **saved server-state + a scripted choreography**:
 
 - **(a) a fixture** — an authored start-state that returning players resume into (positions,
-  inventory, selected spells, nearby NPCs, cell authority), and
-- **(b) a choreography** — a script of per-player actions with screenshots and log-checks at fixed
-  points.
+  inventory, selected spells, nearby NPCs, cell authority): the state subdirs below, named by
+  `FIXTURE=` in `scenario.conf`, and
+- **(b) a choreography** — `steps.sh`, one verb per line: per-player actions, with screenshots and
+  log assertions at fixed points.
+
+`bin/rig new <dir> --content <profile> --players "a b"` scaffolds one; `bin/rig lint` checks it;
+`bin/rig run` runs it. The keys, verbs and run directory are specified in
+[SCENARIO-FORMAT.md](SCENARIO-FORMAT.md); this guide covers what that format cannot tell you:
+building the fixture, choosing content, and the engine traps that bite headless runs.
 
 You resume players into a hand-built situation rather than driving character generation every run,
 because a returning load is deterministic (camera mode and saved rotation restore cleanly) while
-fresh chargen settles less predictably. This guide covers building the fixture, driving it, and the
-environment traps that bite headless runs.
+fresh chargen settles less predictably.
 
 ---
 
@@ -29,27 +34,25 @@ files that also sit in a server `data/` dir: `banlist.json` (irrelevant) and `re
 per-player saves; `cell/*.json` are per-cell object state (including NPC/creature stats); `world/`
 holds global variables.
 
-The rig's fixture calls:
-
-- **`rig_load_scenario <dir>`** — restores the six subdirs **fresh from the fixture every run**
-  (it `rm -rf`s each first), so every run starts byte-identical **and** whatever the previous run
-  left is cleared (stale players/cells don't leak).
-- **`rig_import_fixture <src> <dir>`** — imports a freshly-authored server `data/` dir (or a `.zip`
-  of one) into a fixture, copying only the six subdirs and **replacing** them (so re-importing a new
-  authoring cleanly drops players you removed).
-- **`rig_clear_state`** — empties the six subdirs for a run that starts from a blank world.
-
-**Where the live state lives.** These calls act on `$RIG_CORESCRIPTS/data`. Build a throwaway work
-copy first with **`rig_corescripts_overlay <workdir> [overlay-dir]...`** (typically
-`"$RIG_RUN_DIR/corescripts"` after `rig_run_dir <name>`): it copies your CoreScripts clone's scripts,
-creates an empty `data/`, layers the rig's server bridge and your overlay dirs on top (a file named
+**How a run uses it.** `FIXTURE=.` (the default) means the subdirs sit in the scenario directory
+itself; `FIXTURE=<dir>` points elsewhere (a fixture shared by several scenarios); `FIXTURE=-` starts
+from a blank world (log in with `login <p> fresh`). A missing subdir is created empty. Each run
+builds a throwaway CoreScripts work copy in its run directory (`corescripts/`): your clone's scripts,
+an empty `data/`, the rig's server bridge, and the scenario's `OVERLAY=` dir on top (a file named
 `<file>.append` appends its lines to `<file>`, e.g. `scripts/customScripts.lua.append` holding
-`require("custom/my-hook")`), and points `RIG_CORESCRIPTS` at the copy. The fixture, the
-`requiredDataFiles.json` and any test hook then go into the copy, and your clone is never written.
+`require("custom/my-hook")`). The fixture is copied in **fresh every run**, so every run starts
+byte-identical and nothing a previous run saved leaks in. Your clone and your fixture are never
+written.
+
+**Importing an authored state:** `rig_import_fixture <src> <dir>` (source `lib/rig.sh`) copies only
+the six subdirs from a server `data/` dir (or a `.zip` of one) into a scenario dir, **replacing**
+them, so re-importing a new authoring cleanly drops players you removed. The same library offers
+`rig_load_scenario`, `rig_clear_state` and `rig_corescripts_overlay` to tools that drive the rig
+without the runner.
 
 A fixture can be a **superset** that several scenarios share (e.g. one save holding players for two
 different choreographies). An unconnected player in the fixture is inert — a choreography only
-`rig_login`s the players it uses.
+`login`s the players it uses (`PLAYERS` lists them).
 
 ---
 
@@ -67,7 +70,8 @@ The reliable way to build a fixture is to **play into it** with a real client:
 2. Drive the world to the situation you want: walk each player to its position and facing, put the
    right items in inventory, select the spell/scroll on a quick-key, get the right NPCs nearby.
 3. **Save**, then hand the server's `data/` dir (or a `.zip` of it) to `rig_import_fixture`.
-4. Convention: **player password = player name** (`a`/`a`, `b`/`b`, …) so the rig can log them in.
+4. Convention: **player password = player name** (`a`/`a`, `b`/`b`, …), the runner's default;
+   otherwise list them in `PASSWORDS=`.
 
 Then commit the fixture. (Fixtures derived from a commercial game's data are game-content — keep them
 in `scenarios/local/`, which is gitignored, not in a public repo.)
@@ -95,9 +99,9 @@ already facing its target hits with no calibrated turn. Author the aim once; the
 **Server-side adjustment at runtime (the untouched-fixture pattern).** When a test needs to *set up*
 state without editing the blessed fixture, do it from a one-off server-script chat command that
 modifies the caller via the CoreScripts API (max a skill, grant a scroll + quick-key, bulk health)
-and call it from the choreography. `rig_load_scenario` clears whatever the run saved, so the blessed
-fixture stays pristine. This is how the feature tests in `docs/FEATURE-TESTS.md` provision combat
-stats and summon scrolls.
+and call it from `steps.sh` with `chat <p> "/mycommand"` (the hook ships in the scenario's
+`OVERLAY=` dir). The fixture is reloaded fresh every run, so it stays pristine. This is how the
+feature tests in `docs/FEATURE-TESTS.md` provision combat stats and summon scrolls.
 
 ---
 
@@ -106,7 +110,8 @@ stats and summon scrolls.
 Put co-location **in the fixture**, not a runtime hook: pre-place the players (a CoreScripts teleport
 during authoring) so each phase starts with the right cell authority and facing. **Login order sets
 cell authority** — the first player into a cell owns it — so choreograph the authority you want by
-logging players in in the right order. (If your server uses instanced spawns, disable that for
+the order of the `login` verbs, and assert it right after the first: `assert server 'Authority of
+cell .* is now a'`. (If your server uses instanced spawns, disable that for
 co-located scenarios or each player lands in a separate instance of the cell.)
 
 ---
@@ -115,7 +120,8 @@ co-located scenarios or each player lands in a separate instance of the cell.)
 
 A run needs two content lists that agree: the client's content block (`data=` / `fallback-archive=` /
 `content=` lines) and the server's `requiredDataFiles.json`. You name each content set once in
-`rig.conf` as a **content profile**, and a test selects it by name.
+`rig.conf` as a **content profile**, and a scenario selects it by name (`CONTENT=` in
+`scenario.conf`).
 
 ```sh
 # rig.conf — one profile per content set on this machine
@@ -133,16 +139,12 @@ RIG_CONTENT_mw_FILES="Morrowind.esm Tribunal.esm Bloodmoon.esm"
 | `RIG_CONTENT_<name>_ARCHIVES` | `.bsa` files under `DATA`, loaded as `fallback-archive=` (optional; space-separated) |
 | `RIG_CONTENT_<name>_FILES` | content files under `DATA`, in load order (required; space-separated) |
 
-In the test:
-
-```sh
-rig_use_content mw     # writes requiredDataFiles.json + the clients' content block for profile "mw"
-```
-
-`rig_use_content` dies with the offending key when the profile is incomplete (`DATA` missing, a file
-in `FILES` or `ARCHIVES` not under `DATA`). With `RIG_CONTENT_SOFT=1` it returns 4 instead, so a
-caller can treat "this machine has no such content" as a skip. `bin/rig doctor` checks every profile
-in `rig.conf` the same way. The profile `example` also accepts the older `EXAMPLE_SUITE=<data dir>`
+The runner writes `requiredDataFiles.json` and the clients' content block from the profile. A
+profile this machine does not configure makes the scenario `SKIP` (exit 4) with the `rig.conf` key
+named, so a suite on commercial data skips cleanly on a box without it; an incomplete profile (`DATA`
+missing, a file in `FILES` or `ARCHIVES` not under `DATA`) is named the same way. `bin/rig doctor`
+checks every profile in `rig.conf`; `bin/rig list` marks a scenario whose profile is absent. Tools
+without the runner call `rig_use_content <name>`. The profile `example` also accepts the older `EXAMPLE_SUITE=<data dir>`
 key (with `FILES=template.omwgame`).
 
 **Where the content block goes.** The rig writes it into each client's isolated profile
@@ -211,7 +213,9 @@ even enter the world already expired, because typing at the connect screen doesn
 While vanity is active the centre-screen ray is wrong, so **activate/pick-up silently misses** and
 screenshots are re-framed.
 
-**Fix:** call **`rig_start_idle_wiggler` once, after your players are in-world.** It nudges the mouse
+**Fix:** the runner starts the **idle wiggler** after the first `login` (`WIGGLE=0` in
+`scenario.conf` turns it off; the `wiggle` verb restarts it; library tools call
+`rig_start_idle_wiggler` once the players are in-world). It nudges the mouse
 1px-and-back on every booted display every `RIG_WIGGLE_INTERVAL` (default 20 s, which must stay
 `< 30 s`), firing immediately on start. The nudge direction alternates so its injected yaw cancels
 over pairs (net ~0 drift) and returns the cursor to screen-centre, disturbing neither gameplay aim
@@ -239,7 +243,8 @@ it. The key is empty by default and never auto-detected; `bin/rig doctor` prints
 
 **Isolated profiles are mandatory.** A shared `~/.config/openmw` carries another engine version's
 `input_v3.xml`/`settings.cfg`/`shaders.yaml`; sharing it breaks this build's bindings and shaders.
-The rig runs each client under an isolated `XDG_CONFIG_HOME`/`XDG_DATA_HOME` and wipes it each run.
+The rig runs each client under an isolated `XDG_CONFIG_HOME`/`XDG_DATA_HOME`, created fresh in the
+run directory (`profiles/<player>/`), where the cfg it booted with stays for inspection.
 
 ---
 
@@ -248,12 +253,12 @@ The rig runs each client under an isolated `XDG_CONFIG_HOME`/`XDG_DATA_HOME` and
 Actions must be drivable headlessly and verifiable, so keep them **simple and atomic** and compose
 complexity from *sequences*, not fancy single actions.
 
-- **Tier A — trivial, always reliable** (keyboard-driven, deterministic): login/logout, movement taps
-  (`rig_tap w`), stance toggles (`F` weapon, `R` spell), quick-keys (`1`–`0`), activate (`space`),
-  chat commands (`rig_chat_command`).
+- **Tier A — trivial, always reliable** (keyboard-driven, deterministic): `login`/`logout`, movement
+  (`hold a w 0.5`), stance toggles (`key a f` weapon, `key a r` spell), quick-keys (`key a 1`),
+  activate (`key a space`), chat commands (`chat a "/cmd"`).
 - **Tier B — needs a known recipe** (in [cookbook/](cookbook/), reliable once calibrated): casting
-  (synthetic LMB), scroll casting (quick-key + read-parchment), hiding the chat/welcome window, inventory open,
-  dropping an item into the world, picking a world item up.
+  (`cast`), scroll casting (`scroll`), hiding the chat/welcome window (`hidechat`), inventory open
+  (`rmb`), dropping an item into the world, picking a world item up.
 - **Tier C — calibration-sensitive** (drive via the exploration loop, expect iteration): precise
   camera turns, timing a screenshot to a sub-second visual, anything mouse-*aimed* in gameplay.
 
@@ -268,8 +273,10 @@ pass and **record the result in [cookbook/](cookbook/)** so it's Tier B next tim
 When an action's headless implementation is unknown or flaky, **don't guess and bake it into the
 scenario** — isolate it:
 
-1. Boot a single long-lived client into the relevant fixture (`templates/explore-client.sh`): one
-   ~40 s boot, many fast tries, far cheaper than re-running the whole scenario per attempt.
+1. Bring the scenario's world up and leave it running: `bin/rig up <scenario dir> [player]` (one
+   ~40 s boot, many fast tries, far cheaper than re-running the whole scenario per attempt); drive
+   it from another shell with `DISPLAY=:99 xdotool …`, capture with
+   `DISPLAY=:99 import -window root shot.png`, and stop it with `bin/rig down`.
 2. **One action → screenshot → read the screenshot → check the server/client log → adjust → repeat.**
    The screenshot catches the visual; the log catches the packet (the deterministic signal).
 3. **Vary one thing at a time** (hold-time, key vs mouse, with/without a preceding state change), and
@@ -277,7 +284,8 @@ scenario** — isolate it:
    cast chance, a resource cost, a modal window) that headless work hides. Rule those out before
    blaming the input. When in doubt, ask someone with game knowledge — it resolves these instantly.
 4. **Record the outcome in [cookbook/](cookbook/)** — what worked, what didn't, and *why*, including
-   the dead ends.
+   the dead ends — and, if it needs more than the verbs, as a custom verb in the scenario's
+   `hooks.sh` (SCENARIO-FORMAT.md §3.8).
    That record is the point: it turns a Tier-C action into a Tier-B recipe.
 
 ---
