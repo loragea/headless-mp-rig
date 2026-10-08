@@ -951,6 +951,8 @@ rig_doctor() {
         else _rd_fail "${k%%:*}: not installed (package: ${k#*:})"; fi
     done
     command -v unzip >/dev/null 2>&1 || _rd_warn "unzip: not installed (package: unzip) — needed only by rig_import_fixture for .zip saves"
+    command -v luac5.1 >/dev/null 2>&1 || command -v luajit >/dev/null 2>&1 || command -v luac >/dev/null 2>&1 \
+        || _rd_warn "luac5.1/luajit: not installed (package: lua5.1 or luajit) — optional; lib/scenario.sh selftest then skips the Lua syntax check"
     if ! find /usr/lib /lib -maxdepth 4 -type d -name 'osgPlugins-*' 2>/dev/null | grep -q .; then
         _rd_warn "osgPlugins: no osgPlugins-* dir under /usr/lib or /lib — OpenMW 0.49+ clients abort without the OSG plugins"
     fi

@@ -1932,7 +1932,21 @@ EOF
     echo "$out"
     fails=$((fails + $(grep -c '^  FAIL' <<<"$out")))
 
-    # -- 7. dry-run: an external command in steps.sh is reported --
+    # -- 7. Lua syntax of the probe and the server bridge, when a Lua 5.1 compiler is installed --
+    local luac='' lf
+    if command -v luac5.1 >/dev/null 2>&1; then luac="luac5.1 -p"
+    elif command -v luajit >/dev/null 2>&1; then luac="luajit -bl"
+    elif command -v luac >/dev/null 2>&1; then luac="luac -p"; fi
+    if [ -n "$luac" ]; then
+        for lf in "$RIG_ROOT/probe/scripts/rig/probe.lua" "$RIG_ROOT/overlay/scripts/custom/rig-bridge.lua"; do
+            if out=$($luac "$lf" 2>&1 >/dev/null); then _ok "lua: ${lf#"$RIG_ROOT"/} parses (${luac%% *})"
+            else _bad "lua: ${lf#"$RIG_ROOT"/} parses (${luac%% *})" "$out"; fi
+        done
+    else
+        echo "  skipped: no luac5.1, luajit or luac installed (Lua syntax of probe.lua and rig-bridge.lua not checked)"
+    fi
+
+    # -- 8. dry-run: an external command in steps.sh is reported --
     mkdir -p "$t/s4"; printf 'PLAYERS=a\nCONTENT=example\n' > "$t/s4/scenario.conf"
     printf 'boot a\nlogin a\ngrep x y\nassert server ok\n' > "$t/s4/steps.sh"
     out=$(bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" 2>&1); rc=$?

@@ -20,7 +20,7 @@ each one sees.
 
 - Linux with **Xvfb**, **xdotool**, **ImageMagick 7** (`magick`/`import`) and **python3**, plus
   `bash`, `tar`, `procps` (`pgrep`/`pkill`); `shellcheck` for `bin/rig lint` (optional); `unzip` only
-  to import zipped server saves.
+  to import zipped server saves; `lua5.1` or `luajit` for the selftest's Lua syntax check (optional).
 - A compiled **client + dedicated server** of your OpenMW-MP build, and its **server-side Lua
   scripts** (TES3MP CoreScripts or your fork's).
 - A working GL (software `llvmpipe` is fine, just slow).

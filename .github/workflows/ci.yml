@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     # The compare library calls ImageMagick 7's `magick` CLI. Ubuntu runners ship ImageMagick 6
     # (no `magick`); Debian 13 ships 7, so the job runs in a Debian 13 container. The scenario
-    # selftest's `assert json` case needs python3.
+    # selftest's `assert json` case needs python3, its Lua syntax check lua5.1 (luac5.1).
     container: debian:trixie-slim
     steps:
       - name: Install tools
@@ -17,7 +17,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates git shellcheck imagemagick python3
+          apt-get install -y --no-install-recommends ca-certificates git shellcheck imagemagick python3 lua5.1
       - uses: actions/checkout@v4
       - name: Shell lint
         run: shellcheck -S warning lib/*.sh bin/*.sh bin/rig templates/*.sh
