@@ -17,7 +17,7 @@ executes `steps.sh` verb by verb, and writes one verdict. This file is the contr
   overlay/               optional  CoreScripts overlay tree (OVERLAY=); <file>.append lines are appended
   player/ cell/ world/ map/ recordstore/ custom/   optional  the fixture: server state the run resumes
   reference-images/      optional  blessed frames + manifest.tsv (docs/VERIFICATION.md)
-  reference-logs/        optional  blessed <name>.events signatures (docs/VERIFICATION.md)
+  reference-logs/        optional  blessed <name>.events signatures + manifest.tsv (docs/VERIFICATION.md)
 ```
 
 ## 2. `scenario.conf`
@@ -224,7 +224,8 @@ bin/rig run <dir>... | --tag T | --all  [--out DIR] [--capture] [--strict-refs] 
 The other commands (`bin/rig help <command>` for each): `list`, `new`, `lint`, `explain` (the
 failing steps of every attempt of a run with the file, byte window and line range to open),
 `rerun-failed`, `stats` (counts, durations and a recent-versus-long-run judgment per scenario across
-run sets, §5.1), `up` (a scenario's world left running for exploration), `down`, and `cmd` (one
+run sets, §5.1), `calibrate` and `bless` (measure a scenario's run-to-run spread and bless its
+references, §5.2), `up` (a scenario's world left running for exploration), `down`, and `cmd` (one
 server-bridge command to the world `up` left running: `bin/rig cmd probe a nearby`).
 
 ### 4.1 Exit codes and verdict
@@ -319,6 +320,49 @@ its start and its directory. A final table gives the pass rate of all selected a
 at attempt start (`start_busy`; `start_loadavg` per core for attempts recorded without a sample) in
 the buckets <10 %, 10-30 %, 30-60 %, >=60 % and unknown. `--json` prints the same as one document,
 with the busy buckets per scenario too. Exit 0, 1 when nothing is found, 64 usage.
+
+### 5.2 `bin/rig calibrate` and `bin/rig bless`
+
+```
+bin/rig calibrate <scenario> [--runs N] [--out DIR] [--from RUN]...
+bin/rig bless <calibration.json | calibration dir | run dir> <scenario> [name...]
+              [--tolerance V] [--metric RMSE|PHASH] [--note "text"] [--replace]
+```
+
+`calibrate` runs `bin/rig run --capture` N times (default 3, at least 2), one after another, and
+measures the candidates of every `shot` (pair inputs left out) and `signature` with the rule in
+[VERIFICATION.md](VERIFICATION.md) §3. `--from RUN` measures existing runs of the scenario instead.
+Exit 0 every candidate set is blessable; 1 one is not, or a run failed an assertion; 3 a run did not
+come up; 4 content missing; 64 usage. The calibration directory
+(default `$RIG_RUNS/<YYYYmmdd-HHMMSS>-calibrate-<name>`):
+
+```
+run-<k>/                     each capture run's run set (§5)
+<shot>.contact.png           the candidates left to right (medoid and freaks labelled), then the
+                             difference image of the farthest pair (<shot>.farthest-diff.png)
+<signature>.sigdiff          unified diff of the first run's signature against each differing one
+calibration.json
+```
+
+`calibration.json`: `scenario`, `scenario_dir`, `date`, `build_id` (the first run's `env.txt`;
+`build_ids` lists all when they differ), `runs` (the scenario run dirs, in order: `run-1` is the
+first), `rule` (margin, floors, hard limits, freak factor), and per shot under `shots.<name>`:
+`metric`, `metric_source` (`manifest`, `crop` or `full frame`), `size`, `candidates` (`run`,
+`path`), `pairs` (`a`, `b`, `RMSE`, `PHASH`), `spread` (largest RMSE and PHASH among non-freaks),
+`freaks`, `proposed_tolerance`, `hard_limit`, `recommended` and `recommended_path` (the medoid),
+`contact_sheet`, `status` (`ok` or `not-blessable`) and `reason`; per signature under
+`signatures.<name>`: `candidates`, `events`, `recommended`, `recommended_path`, `status`, `reason`,
+`varying_lines`, `diff`.
+
+`bless` writes, for a shot, `reference-images/<name>.png` and the row
+`<name> <metric> <threshold> - <description> [blessed <YYYY-MM-DD> build <id>]` in
+`reference-images/manifest.tsv` (the comparer reads columns 1–4); for a signature,
+`reference-logs/<name>.events` and the row `<name> <YYYY-MM-DD> <build id> <note>` in
+`reference-logs/manifest.tsv`. From a calibration it takes every `ok` set (or the named ones) with its
+medoid and proposed tolerance; from a run dir, the named shots and signatures with `--tolerance` or the
+tolerance of the existing manifest row. An existing reference refuses the whole bless unless
+`--replace` is given; nothing is copied on a refusal. Exit 0 blessed, 1 refused, 64 usage. Only a
+human runs it: `bin/rig run` never blesses.
 
 ## 6. Geometry contract
 

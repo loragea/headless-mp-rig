@@ -61,9 +61,10 @@ unchanged.
   `KB-19-phash-bimodal-crop-gui-rmse`: the full 3D frame (animating water, a placeholder avatar) is
   too variable to bless, but the minimap crop is not.
 
-Re-blessing is a human decision. Copy the candidate from a green run over the reference:
-`shots/20-b-minimap.png` → `reference-images/20-b-minimap.png`, or `review/example-server.events` →
-`reference-logs/example-server.events`, and commit with the build it was captured on.
+Re-blessing is a human decision, made only after a verified, intended behaviour change:
+`bin/rig calibrate scenarios/example`, review its contact sheet, then
+`bin/rig bless <calibration.json> scenarios/example <name> --replace --note "<why>"`, and commit the
+written files (docs/VERIFICATION.md §5).
 
 ## The fixture
 

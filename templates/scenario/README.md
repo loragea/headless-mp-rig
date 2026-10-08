@@ -13,6 +13,6 @@ bin/rig explain latest        # on a red run: each failing step and the file to 
 bin/rig up <this dir>         # explore the world by hand; bin/rig down to stop it
 ```
 
-Blessing a reference is a human decision: copy the candidate of a green run
-(`shots/<name>.png` -> `reference-images/<name>.png`, `review/<name>.events` -> `reference-logs/`)
-and commit it with the build it was captured on (docs/VERIFICATION.md §5).
+Blessing a reference is a human decision: `bin/rig calibrate <this dir>` measures several capture
+runs and proposes a tolerance; after reviewing its contact sheets, `bin/rig bless <calibration.json>
+<this dir> --note "<why>"` copies the candidates and writes the manifest rows (docs/VERIFICATION.md §5).

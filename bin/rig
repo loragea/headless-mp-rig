@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # rig — command-line front end of headless-mp-rig. `bin/rig help` lists the commands; `bin/rig help
 # <command>` (or `bin/rig <command> --help`) explains one. The commands:
-#   doctor | list | new | lint | run | explain | rerun-failed | stats | up | down | cmd | help
+#   doctor | list | new | lint | run | explain | rerun-failed | stats | calibrate | bless | up | down | cmd | help
 # Exit codes: 0 ok, 1 fail, 2 regression, 3 infrastructure, 4 content missing, 64 usage error.
 # The scenario format, verbs and run directory: docs/SCENARIO-FORMAT.md. Quickstart: README.md.
 #
@@ -17,6 +17,8 @@ source "$DIR/../lib/scenario.sh"
 source "$DIR/../lib/stats.sh"
 # shellcheck source=../lib/cli.sh
 source "$DIR/../lib/cli.sh"
+# shellcheck source=../lib/calibrate.sh
+source "$DIR/../lib/calibrate.sh"
 
 cmd=${1:-help}; [ $# -gt 0 ] && shift
 case $cmd in
@@ -36,6 +38,8 @@ case $cmd in
     explain)        rig_cli_explain "$@"; exit $? ;;
     rerun-failed)   rig_cli_rerun_failed "$@"; exit $? ;;
     stats)          rig_stats "$@"; exit $? ;;
+    calibrate)      rig_calibrate "$@"; exit $? ;;
+    bless)          rig_bless "$@"; exit $? ;;
     up)             rig_cli_up "$@"; exit $? ;;
     down)           rig_cli_down "$@"; exit $? ;;
     cmd)            rig_cli_cmd "$@"; exit $? ;;

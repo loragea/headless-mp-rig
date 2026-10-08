@@ -13,6 +13,7 @@ lib/compare.sh selftest
 lib/logcheck.sh selftest
 lib/scenario.sh selftest
 lib/stats.sh selftest
+lib/calibrate.sh selftest
 bin/rig run --dry-run scenarios/example
 bin/rig lint scenarios/example
 bin/rig new /tmp/t1 --players "a b" --content example && bin/rig lint /tmp/t1

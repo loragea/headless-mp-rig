@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # cli.sh — the authoring and diagnosis subcommands of bin/rig: list, new, lint, explain, rerun-failed,
-# up, down, cmd, and the per-subcommand help (stats lives in lib/stats.sh). bin/rig sources this after lib/rig.sh and lib/scenario.sh;
+# up, down, cmd, and the per-subcommand help (stats lives in lib/stats.sh, calibrate and bless in
+# lib/calibrate.sh). bin/rig sources this after lib/rig.sh and lib/scenario.sh;
 # each rig_cli_<cmd> returns the subcommand's exit code (64 = usage error). Not meant to be run.
 #
 # Everything here reads what the runner writes (docs/SCENARIO-FORMAT.md §4-§5): scenario.conf without
@@ -23,6 +24,8 @@ usage: bin/rig <command> [args]     (bin/rig help <command> for one command)
   explain [run|latest]     the failing steps of a run and the file to open for each
   rerun-failed [run|latest]  run again the scenarios that failed in a run
   stats [--runs N|--days D]  pass, retry and fail counts per scenario across runs; unlucky or regression
+  calibrate <dir> [--runs N]  capture runs; per shot the spread, a proposed tolerance and the medoid
+  bless <calibration> <dir>  copy candidates into the scenario's references (human-invoked only)
   up <dir> [player...]     boot a scenario's server and clients, log the players in, leave them running
   down                     stop everything `up` or a killed run left running
   cmd <verb> <player> ...  send one server-bridge command to the world `up` left running, print the answer
@@ -89,6 +92,8 @@ usage: bin/rig rerun-failed [<run-dir>|latest] [run flags...]
 EOF
             ;;
         stats) _st_usage ;;
+        calibrate) _cal_usage ;;
+        bless) _bless_usage ;;
         up) cat <<'EOF'
 usage: bin/rig up <dir> [player...]
   Bring a scenario's world up and leave it running for exploration: its fixture, overlay, settings
@@ -400,13 +405,15 @@ _cli_explain_row() {
             echo "    open: $r/shots/$w.png (this run)"
             [ -f "$src/reference-images/$w.png" ] && echo "          $src/reference-images/$w.png (reference)"
             [ -f "$r/review/$w.diff.png" ] && echo "          $r/review/$w.diff.png (difference image)"
-            case $st in NO-REFERENCE|UNBLESSED) echo "    bless (a human decision): cp $r/shots/$w.png $src/reference-images/$w.png";; esac ;;
+            case $st in NO-REFERENCE|UNBLESSED)
+                echo "    bless (a human decision): bin/rig calibrate $src, then bin/rig bless <calibration.json> $src $w";; esac ;;
         signature)
             w=$kind; [ -n "$w" ] || w=$(_sc_scenario_name "$src" 2>/dev/null)
             [ -f "$r/review/$w.logdiff" ] && echo "    open: $r/review/$w.logdiff (reference vs this run's signature)"
             [ -f "$r/review/$w.events" ] && echo "          $r/review/$w.events (this run's signature)"
             [ -f "$src/reference-logs/$w.events" ] && echo "          $src/reference-logs/$w.events (reference)"
-            case $st in NO-REFERENCE|UNBLESSED) echo "    bless (a human decision): cp $r/review/$w.events $src/reference-logs/$w.events";; esac ;;
+            case $st in NO-REFERENCE|UNBLESSED)
+                echo "    bless (a human decision): bin/rig calibrate $src, then bin/rig bless <calibration.json> $src $w";; esac ;;
         pair)
             read -r _ _ p w _ <<<"$desc"
             echo "    open: $r/shots/$p.png and $r/shots/$w.png (the two frames that must differ)" ;;

@@ -136,9 +136,24 @@ changes the verdict (compare is still vs the manifest **threshold**, not the cei
 mask a regression — it only removes transient capture noise.
 
 **Calibrate thresholds honestly, don't hand-tune.** Measure the real run-to-run spread over several
-clean runs and set each STATIC tolerance to a gap-rejected max-deviation × margin, where gap-rejection
-drops only true partial-render freaks and **keeps** legit high-variance samples. A genuinely variable
-3D frame then gets an honest (not artificially tight) tolerance, and a real regression still trips it.
+clean runs and derive each STATIC tolerance from it: `bin/rig calibrate <scenario>` does this and
+`calibration.json` records every number ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md) §5.2). The rule:
+
+- **Metric.** The shot's manifest row when it has one; otherwise RMSE for a crop and PHASH for a full
+  frame (the convention above). Both are measured and shown for every shot.
+- **Spread.** The metric between every two runs' candidates; the spread is the largest of these.
+- **Freak frames (gap rejection).** With 3 or more runs, a candidate whose distance to *every* other
+  candidate exceeds both the metric's floor and 3 × the largest distance among the others is a
+  freak: flagged on the contact sheet and left out of the spread and the medoid. Only a candidate far
+  from all the others is rejected, so a legitimately variable frame keeps its high-variance samples.
+- **Tolerance** = max(floor, spread × 1.5, rounded up to 2 significant digits). Floors: RMSE 0.01,
+  PHASH 8; below them a tolerance measures only capture noise.
+- **Hard limit.** A proposed tolerance above RMSE 0.05 or PHASH 25 is not blessable: the frame is not
+  static. Crop it to the element it asserts, or gate it as a DYNAMIC pair.
+- **Reference** = the medoid: the candidate with the least total distance to the other non-freak
+  candidates, never an arbitrary run.
+- **Signatures** are blessable only when every run produced the same one; a line that varies is
+  removed from `LOG_MARKERS` or masked in `_log_normalize` (§1), never blessed.
 
 Run `lib/compare.sh selftest` — synthetic scenes prove identical→PASS, tiny-change→PASS (within tol),
 big-change→REVIEW (+ a diff image written). No game data or binaries needed.
@@ -165,11 +180,22 @@ big-change→REVIEW (+ a diff image written). No game data or binaries needed.
 A screenshot or log-signature move is a **regression**, not an advisory. Resolve it one of two ways:
 
 - **Regression** — a change broke something. **Fix the code**; the reference stays.
-- **Legitimate change** — the engine genuinely changed graphics / AI / the packet sequence. The
-  reference is stale and must be re-blessed: copy the run's candidate over the reference
-  (`shots/<name>.png` → `reference-images/<name>.png`, `review/<name>.events` → `reference-logs/`;
-  library tools call `promote_shot` / `promote_log`), and re-record which base
-  moved it).
+- **Legitimate change** — the engine genuinely changed graphics / AI / the packet sequence, and the new
+  behaviour was verified as intended by another means. The reference is stale and must be re-blessed.
+
+Re-blessing is never a response to a failing test; only a verified, intended behaviour change. The
+tools ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md) §5.2):
+
+```sh
+bin/rig calibrate <scenario>                     # N capture runs: table, contact sheets, calibration.json
+bin/rig bless <calibration.json> <scenario> --note "<why>"            # first reference
+bin/rig bless <calibration.json> <scenario> <name> --replace --note "<why>"   # re-bless
+```
+
+`bless` copies the medoid (or a signature) into `reference-images/` (`reference-logs/`), writes the
+manifest row with the proposed tolerance, the date, the build id and the note, refuses to overwrite a
+reference without `--replace`, and prints the `git add` for the files. Library consumers call
+`promote_shot` / `promote_log`. `bin/rig run` never blesses.
 
 Never re-bless unattended — a unilateral re-bless enshrines regressions and defeats the gate. Keep a
 **baseline set captured from an unmodified upstream build** so that a regression introduced later

@@ -83,6 +83,18 @@ A run records the host's load next to its verdict (`load.txt`) and never waits f
 software-GL test can fail by chance on a busy box, so re-run it (`bin/rig run --retry-failed 1`) and
 let `bin/rig stats` show whether a scenario's failure rate went up.
 
+**4b. Bless a reference** for a scenario with a `shot` or `signature` and no reference yet (an
+`UNBLESSED` row), or after a verified, intended behaviour change:
+
+```sh
+bin/rig calibrate scenarios/local/my-test     # 3 capture runs: per shot the run-to-run spread, a proposed
+                                              # tolerance, the recommended frame and a contact sheet
+bin/rig bless <calibration.json> scenarios/local/my-test --note "why this frame is right"
+```
+
+Open the contact sheets before you bless: blessing is a human decision, and `bin/rig run` never
+blesses. Re-blessing is never a response to a failing test (`docs/VERIFICATION.md` §5).
+
 **5. Explore by hand** when you do not yet know how to drive an action headlessly:
 
 ```sh
@@ -100,14 +112,15 @@ bin/rig down                  # stops everything up (or a killed run) left runni
 
 ```
 rig.conf.example     copy to rig.conf; every key, commented: build, scripts, content profiles, runs, displays
-bin/rig              the command line: doctor, list, new, lint, run, explain, rerun-failed, stats, up,
-                     down, cmd
+bin/rig              the command line: doctor, list, new, lint, run, explain, rerun-failed, stats,
+                     calibrate, bless, up, down, cmd
 bin/run-example.sh   shorthand for `bin/rig run scenarios/example`
 lib/rig.sh           the rig: run dirs, CoreScripts work copy, boot server+clients, load fixtures, drive
                      input, event-gated waits, capture
 lib/scenario.sh      the runner: conf parser, verbs, log windows, verdict, run sets (+ selftest)
 lib/cli.sh           the authoring and diagnosis subcommands of bin/rig
 lib/stats.sh         host load recording (load.txt) and `bin/rig stats` (+ selftest)
+lib/calibrate.sh     `bin/rig calibrate` (spread, tolerance, medoid) and `bin/rig bless` (+ selftest)
 lib/compare.sh       screenshot regression compare (magick, per-image tolerance) — library + CLI + selftest
 lib/logcheck.sh      log event-signature compare (masked, ordered) — library + CLI + selftest
 overlay/             the rig's server-side bridge, layered into every CoreScripts work copy: anchor log
@@ -129,8 +142,8 @@ docs/                the manuals (below)
   testing with **real game data** vs free content, avoiding the vanity camera, the action vocabulary,
   and the manual exploration loop.
 - **[docs/VERIFICATION.md](docs/VERIFICATION.md)** — the three signal types and **when to use each**
-  (log-gated vs static reference image vs dynamic pair), plus the exact ImageMagick metrics,
-  thresholds, and freak-frame handling.
+  (log-gated vs static reference image vs dynamic pair), plus the exact ImageMagick metrics, the
+  tolerance rule `bin/rig calibrate` applies, freak-frame handling and blessing.
 - **[docs/cookbook/](docs/cookbook/)** — the headless-action recipes, one file each: casting, scroll
   timing, camera turns, inventory drag-and-drop, item pickup, finding GUI click coordinates, catching
   a transient visual, and the combat-state confounds that make casts "flaky".
@@ -141,7 +154,7 @@ docs/                the manuals (below)
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules and how to add a capability or recipe.
-CI runs shell lint, the four library selftests and `bin/rig lint` on the example and on a scaffolded
+CI runs shell lint, the five library selftests and `bin/rig lint` on the example and on a scaffolded
 scenario; none of it needs a game binary.
 
 ## License
