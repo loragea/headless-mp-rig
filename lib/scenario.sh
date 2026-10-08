@@ -744,7 +744,7 @@ _sc_bridge_send() {
     SC_BRIDGE_REPLY=$(head -c 300 "$dir/err-$seq"); return 1
 }
 _sc_bridge_timeout() {
-    _sc_infra "the server bridge did not answer command $SC_BRIDGE_SEQ within RIG_BRIDGE_CAP=${RIG_BRIDGE_CAP}s (bridge/cmd-$SC_BRIDGE_SEQ.meta unanswered; server.log should show '[rig-bridge] commands from')"
+    _sc_infra "the server bridge did not answer command $SC_BRIDGE_SEQ within RIG_BRIDGE_CAP=${RIG_BRIDGE_CAP}s (bridge/cmd-$SC_BRIDGE_SEQ.meta unanswered). First check: grep rig-bridge server.log — no 'loaded' line: the bridge was not required; no 'commands from' line: RIG_BRIDGE_DIR did not reach the server"
 }
 # _sc_setup_ready <p> — the player's client runs and the server logged it in; else a FAIL row.
 _sc_setup_ready() {
@@ -854,27 +854,51 @@ _sc_probe_lines() {
         [ "$s" = "$3" ] && printf '%s\n' "$line"
     done < <(grep -a "^\\[rigprobe:$2\\] " "$(_sc_logfile "probe-$1")" 2>/dev/null)
 }
-# _sc_probe_last <p> <kind> [n] — the seq of the n-th last request (default 1) that answered <kind>.
+# _sc_probe_last <p> <kind> [n] — the seq of the n-th last request (default 1) that answered <kind>
+# (a request of that kind or a dump). Returns 1 when there is none, 3 when that request was sent but
+# never answered (its lines may arrive later and must not be read as current).
 _sc_probe_last() {
     local -a hits=()
-    local n=${3:-1} w
+    local n=${3:-1} w k
     for w in ${SC_PROBE_REQS[$1]:-}; do
-        case ${w#*:} in "$2"|dump) hits+=("${w%%:*}");; esac
+        k=${w#*:}; k=${k%%:*}
+        case $k in "$2"|dump) hits+=("$w");; esac
     done
     [ "${#hits[@]}" -ge "$n" ] || return 1
-    printf '%s' "${hits[${#hits[@]}-n]}"
+    w=${hits[${#hits[@]}-n]}
+    printf '%s' "${w%%:*}"
+    [[ $w == *:failed ]] && return 3
+    return 0
+}
+# _sc_probe_pick <verb> <p> <kind> [n] — SC_PICK = _sc_probe_last's seq; on none or an unanswered
+# request write the FAIL row and return 1.
+_sc_probe_pick() {
+    local rc=0
+    SC_PICK=$(_sc_probe_last "$2" "$3" "${4:-1}") || rc=$?
+    case $rc in
+        0) return 0 ;;
+        3) _sc_row FAIL "" "$1: the last 'probe $2 $3' request (seq $SC_PICK) was not answered; its lines may still arrive, so no $3 lines are read until a new 'probe $2 $3' succeeds" ;;
+        *) if [ "${4:-1}" -gt 1 ]; then _sc_row FAIL "" "$1: needs ${4} 'probe $2 $3' (or dump) requests before it"
+           else _sc_row FAIL "" "$1: no 'probe $2 $3' (or dump) request before this assert"; fi ;;
+    esac
+    return 1
 }
 # _sc_probe_request <p> <kind> — push "lua rigprobe <kind> <seq>" through the bridge and await the
 # client's [rigprobe:done] ... seq=<seq>. Returns 0 answered, 1 bridge refused, 2 bridge silent,
-# 3 client silent. SC_PROBE_SEQ = the request's seq.
+# 3 client silent. SC_PROBE_SEQ = the request's seq. A refused or unanswered request is recorded as
+# failed, so a later assert on its kind FAILs instead of reading an older request.
 _sc_probe_request() {
     local p=$1 kind=$2 rc=0
     _sc_bridge_send probe "$p" "$kind" || rc=$?
     SC_PROBE_SEQ=$SC_BRIDGE_SEQ
-    [ "$rc" = 0 ] || return "$rc"
-    _sc_poll "$RIG_PROBE_CAP" _sc_grep_from "$(_sc_logfile "probe-$p")" 0 "^\\[rigprobe:done\\] .*seq=$SC_PROBE_SEQ( |\$)" || return 3
-    SC_PROBE_REQS[$p]="${SC_PROBE_REQS[$p]:-} $SC_PROBE_SEQ:$kind"
-    return 0
+    if [ "$rc" = 0 ] && ! _sc_poll "$RIG_PROBE_CAP" _sc_grep_from "$(_sc_logfile "probe-$p")" 0 "^\\[rigprobe:done\\] .*seq=$SC_PROBE_SEQ( |\$)"; then
+        rc=3
+    fi
+    case $rc in
+        0)   SC_PROBE_REQS[$p]="${SC_PROBE_REQS[$p]:-} $SC_PROBE_SEQ:$kind" ;;
+        1|3) SC_PROBE_REQS[$p]="${SC_PROBE_REQS[$p]:-} $SC_PROBE_SEQ:$kind:failed" ;;
+    esac
+    return "$rc"
 }
 # _sc_probe_request_row <p> <kind> — a request whose failure closes the current row; 0 when answered.
 _sc_probe_request_row() {
@@ -884,7 +908,7 @@ _sc_probe_request_row() {
         0) return 0 ;;
         1) _sc_row FAIL "" "probe $1 $2: bridge $SC_PROBE_SEQ refused: $SC_BRIDGE_REPLY" ;;
         2) _sc_bridge_timeout ;;
-        *) _sc_row FAIL "" "probe $1 $2: client $1 did not answer seq $SC_PROBE_SEQ within RIG_PROBE_CAP=${RIG_PROBE_CAP}s (no '[rigprobe:done] ... seq=$SC_PROBE_SEQ' in probe-$1.log; see client-$1.log)" ;;
+        *) _sc_row FAIL "" "probe $1 $2: client $1 did not answer seq $SC_PROBE_SEQ within RIG_PROBE_CAP=${RIG_PROBE_CAP}s (no '[rigprobe:done] ... seq=$SC_PROBE_SEQ' in probe-$1.log; see client-$1.log). It may still be answered later: every assert on $2 FAILs until a new 'probe $1 $2' succeeds" ;;
     esac
     return 1
 }
@@ -967,7 +991,8 @@ _sc_assert_probe() {
     shift 2
     for c in "$@"; do _sc_probe_cond_parse "$c" && fields+=("$SC_C_FIELD"); done
     _sc_probe_precheck "$p" "$kind" "${fields[@]+"${fields[@]}"}" || return 0
-    seq=$(_sc_probe_last "$p" "$kind") || { _sc_row FAIL "" "assert probe: no 'probe $p $kind' (or dump) request before this assert"; return 1; }
+    _sc_probe_pick "assert probe" "$p" "$kind" || return 1
+    seq=$SC_PICK
     lines=$(_sc_probe_lines "$p" "$kind" "$seq")
     while IFS= read -r line; do
         [ -n "$line" ] || continue
@@ -989,8 +1014,8 @@ _sc_assert_probe_delta() {
     _sc_probe_precheck "$p" "$kind" "$field" || return 0
     if [ "${#nums[@]}" = 2 ]; then sa=${nums[0]}; sb=${nums[1]}
     else
-        sa=$(_sc_probe_last "$p" "$kind" 2) && sb=$(_sc_probe_last "$p" "$kind" 1) \
-            || { _sc_row FAIL "" "assert probe-delta: needs two 'probe $p $kind' requests before it"; return 1; }
+        _sc_probe_pick "assert probe-delta" "$p" "$kind" 1 || return 1; sb=$SC_PICK
+        _sc_probe_pick "assert probe-delta" "$p" "$kind" 2 || return 1; sa=$SC_PICK
     fi
     for x in a b; do
         local s; if [ "$x" = a ]; then s=$sa; else s=$sb; fi
@@ -1923,7 +1948,8 @@ scenario_selftest_probe() {
                             nearby) printf '%s[rigprobe:nearby] p=%s t=9 seq=%s actor=b rec=$dynamic2 dist=256 kind=npc anim=idle hp=50\n' "$pre" "$who" "$n" >> "$cl"
                                     printf '%s[rigprobe:nearby] p=%s t=9 seq=%s obj=door_01 name="Old Door" kind=door dist=900\n' "$pre" "$who" "$n" >> "$cl"
                                     printf '%s[rigprobe:done] p=%s t=9 seq=%s kind=nearby lines=2\n' "$pre" "$who" "$n" >> "$cl" ;;
-                            stats)  printf '%s[rigprobe:stats] p=%s t=9 seq=%s hp=50 fat=%s\n' "$pre" "$who" "$n" "$((150 - 10 * n))" >> "$cl"
+                            stats)  [ -f "$dir/silent" ] && { echo "$det" > "$dir/done-$n"; n=$((n + 1)); continue; }   # sent, never answered
+                                    printf '%s[rigprobe:stats] p=%s t=9 seq=%s hp=50 fat=%s\n' "$pre" "$who" "$n" "$((150 - 10 * n))" >> "$cl"
                                     printf '%s[rigprobe:done] p=%s t=9 seq=%s kind=stats lines=1\n' "$pre" "$who" "$n" >> "$cl" ;;
                             dump)   printf '%s[rigprobe:cell] p=%s t=9 seq=%s cell="Big Hall" x=1\n' "$pre" "$who" "$n" >> "$cl"
                                     printf '%s[rigprobe:done] p=%s t=9 seq=%s kind=dump lines=1 missing=weather\n' "$pre" "$who" "$n" >> "$cl" ;;
@@ -1984,6 +2010,24 @@ scenario_selftest_probe() {
         *) _bad "probe: a silent client -> FAIL naming the seq" "$SC_LAST_STATUS ${SC_RDET[SC_STEP]}";; esac
     checkpoint c1 >/dev/null
     _check "checkpoint: probe dumps by seq" "$SC_LAST_STATUS|$(grep -c 'seq=13 ' "$SC_RUN/checkpoints/c1/a.probe")|$(grep -c 'seq=14 ' "$SC_RUN/checkpoints/c1/b.probe")" "OK|2|2"
+
+    # A request the client never answers must not leave the previous request's lines to be read.
+    touch "$dir/silent"
+    probe a stats >/dev/null
+    _check "probe: an unanswered request -> FAIL" "$SC_LAST_STATUS" FAIL
+    assert probe a stats hp=50 >/dev/null
+    case $SC_LAST_STATUS/${SC_RDET[SC_STEP]} in "FAIL/"*"(seq 15) was not answered"*) _ok "assert probe: after an unanswered request -> FAIL, not the older lines";;
+        *) _bad "assert probe: after an unanswered request -> FAIL, not the older lines" "$SC_LAST_STATUS ${SC_RDET[SC_STEP]}";; esac
+    assert probe-delta a stats fat '<' 0 >/dev/null
+    _check "probe-delta: an unanswered last request -> FAIL" "$SC_LAST_STATUS" FAIL
+    assert probe a cell cell="Big Hall" >/dev/null
+    _check "assert probe: another kind's last request (the checkpoint dump) is unaffected" "$SC_LAST_STATUS" PASS
+    rm -f "$dir/silent"
+    probe a stats >/dev/null
+    assert probe a stats hp=50 >/dev/null
+    _check "assert probe: a new answered request clears it" "$SC_LAST_STATUS" PASS
+    assert probe-delta a stats fat '<' 0 >/dev/null
+    _check "probe-delta: the unanswered request is still one of the last two -> FAIL" "$SC_LAST_STATUS" FAIL
 
     kill "$fb" 2>/dev/null; builtin wait "$fb" 2>/dev/null
     local t0=$SECONDS
