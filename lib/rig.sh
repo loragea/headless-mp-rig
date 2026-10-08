@@ -438,6 +438,32 @@ rig_use_content() {
     rig_add_content "$n" "${lines[@]}"
 }
 
+# rig_use_content_extra <file>... — load extra content files (plugins, .omwscripts) in this run, after
+# rig_use_content and before rig_use_probe. Each argument is a path to an existing file; its directory
+# becomes a data= line (once per directory, so an .omwscripts file finds the Lua scripts beside it) and
+# its file name a content= line, appended in argument order after the profile's files. The same names
+# are appended to requiredDataFiles.json, so the client's plugin list and the server's stay
+# entry-for-entry equal. A file name already in the content list dies (OpenMW aborts on a duplicate).
+rig_use_content_extra() {
+    local f d b
+    local -a lines=()
+    local -A dirseen=()
+    [ "${#RIG_CONTENT_FILES[@]}" -gt 0 ] || rig_die "rig_use_content_extra: call rig_use_content first"
+    [ "$#" -gt 0 ] || return 0
+    for f in "$@"; do
+        [ -f "$f" ] || rig_die "rig_use_content_extra: no such file: $f"
+        d=$(cd "$(dirname "$f")" && pwd) || rig_die "rig_use_content_extra: cannot resolve the directory of $f"
+        b=$(basename "$f")
+        [[ $b == *[[:space:]]* ]] && rig_die "rig_use_content_extra: $b: content file names cannot contain spaces"
+        case " ${RIG_CONTENT_FILES[*]} " in *" $b "*) rig_die "rig_use_content_extra: $b is already in the content list" ;; esac
+        [ -n "${dirseen[$d]:-}" ] || { dirseen[$d]=1; lines+=("data=\"$d\""); }
+        RIG_CONTENT_FILES+=("$b")
+    done
+    for f in "$@"; do lines+=("content=$(basename "$f")"); done
+    rig_set_required_datafiles "${RIG_CONTENT_FILES[@]}"
+    rig_add_content "$RIG_CONTENT_LABEL+extra" "${RIG_CONTENT_LINES[@]}" "${lines[@]}"
+}
+
 # rig_client_lua — 0 when RIG_BUILD's client can load OpenMW Lua scripts (.omwscripts, OpenMW >= 0.48),
 # which the client probe needs; else 1 with RIG_CLIENT_LUA_WHY saying why not. A 0.48+ build ships
 # builtin.omwscripts in its resources dir (resources= in RIG_BUILD/openmw.cfg, default resources/);

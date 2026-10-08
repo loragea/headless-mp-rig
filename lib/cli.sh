@@ -65,7 +65,7 @@ EOF
         lint) cat <<'EOF'
 usage: bin/rig lint <dir>...
   Check each scenario without booting anything (a dir without scenario.conf is searched):
-    scenario.conf  every key is known (docs/SCENARIO-FORMAT.md §2); SETTINGS/OVERLAY/FIXTURE paths exist
+    scenario.conf  every key is known (docs/SCENARIO-FORMAT.md §2); SETTINGS/OVERLAY/FIXTURE/CONTENT_EXTRA paths exist
     steps.sh       bash -n; every call is a verb with valid arguments; no external command, eval,
                    exec, source or redirection; every --since names an earlier mark (bin/rig run --dry-run)
     shellcheck     steps.sh and hooks.sh at warning level, when shellcheck is installed
@@ -295,6 +295,11 @@ _cli_lint_one() {
             SETTINGS) [ -f "$d/$c" ] || { echo "FAIL $f: SETTINGS=$c: no such file in the scenario dir"; bad=1; } ;;
             *)        [ -d "$d/$c" ] || { echo "FAIL $f: $v=$c: no such directory in the scenario dir"; bad=1; } ;;
         esac
+    done
+    c=$(_sc_conf_get "$f" CONTENT_EXTRA)
+    case $c in *'$'*) c='' ;; esac
+    for v in $c; do
+        [ -f "$d/$v" ] || { echo "FAIL $f: CONTENT_EXTRA: $v: no such file in the scenario dir"; bad=1; }
     done
     if [ "$bad" = 0 ]; then
         if ! msg=$(bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$d" 2>&1); then

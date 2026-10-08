@@ -48,7 +48,7 @@ RIG_SCENARIOS=${RIG_SCENARIOS:-$RIG_ROOT/scenarios}   # --tag/--all search roots
 SC_DEFAULT_MARKERS=$LOG_MARKERS     # logcheck.sh's vocabulary, used when LOG_MARKERS is not set
 # The kinds the client probe answers (probe/scripts/rig/probe.lua); `dump` requests all of them.
 SC_PROBE_KINDS="cell stats quest topics inv nearby items effects faction spells time weather"
-SC_CONF_KEYS="NAME PURPOSE PLAYERS PASSWORDS TAGS CONTENT FIXTURE OVERLAY PROBE PROBE_RANGE PROBE_PERIOD SETTINGS LOG_MARKERS COST WIGGLE"
+SC_CONF_KEYS="NAME PURPOSE PLAYERS PASSWORDS TAGS CONTENT CONTENT_EXTRA FIXTURE OVERLAY PROBE PROBE_RANGE PROBE_PERIOD SETTINGS LOG_MARKERS COST WIGGLE"
 SC_VERBS="boot login logout wiggle settle key hold type mouse click rmb look turn chat cast scroll hidechat
 console console-file console-object server server-file save probe wait assert shot pair signature checkpoint mark note artifact"
 
@@ -110,10 +110,15 @@ _sc_load_conf() {
     for k in $(compgen -v P_); do export "${k?}"; done
     # shellcheck disable=SC2034  # the conf values are read by steps.sh and hooks.sh
     NAME=$(_sc_scenario_name "$d"); PURPOSE=${PURPOSE:-}; TAGS=${TAGS:-}; COST=${COST:-}
-    PLAYERS=${PLAYERS:-}; PASSWORDS=${PASSWORDS:-}; CONTENT=${CONTENT:-}; FIXTURE=${FIXTURE:-.}
+    PLAYERS=${PLAYERS:-}; PASSWORDS=${PASSWORDS:-}; CONTENT=${CONTENT:-}; CONTENT_EXTRA=${CONTENT_EXTRA:-}; FIXTURE=${FIXTURE:-.}
     OVERLAY=${OVERLAY:-}; PROBE=${PROBE:-0}; SETTINGS=${SETTINGS:-}; LOG_MARKERS=${LOG_MARKERS:-$SC_DEFAULT_MARKERS}; WIGGLE=${WIGGLE:-1}
     [ -n "$PLAYERS" ] || { SC_CONF_ERR="scenario.conf: PLAYERS is required"; return 1; }
     [ -n "$CONTENT" ] || { SC_CONF_ERR="scenario.conf: CONTENT is required (a content profile name from rig.conf)"; return 1; }
+    SC_CONTENT_EXTRA=(); local f
+    for f in $CONTENT_EXTRA; do
+        [ -f "$d/$f" ] || { SC_CONF_ERR="scenario.conf: CONTENT_EXTRA: no file $f in the scenario dir"; return 1; }
+        SC_CONTENT_EXTRA+=("$d/$f")
+    done
     read -r -a SC_PLAYERS <<<"$PLAYERS"
     local -a pw=(); read -r -a pw <<<"$PASSWORDS"
     [ "${#SC_PLAYERS[@]}" -le 3 ] || { SC_CONF_ERR="scenario.conf: PLAYERS has ${#SC_PLAYERS[@]} names; the rig drives at most 3 clients"; return 1; }
@@ -178,6 +183,7 @@ SC_CAPTURE=${SC_CAPTURE:-0} SC_STRICT=${SC_STRICT:-0} SC_KEEP_UP=${SC_KEEP_UP:-0
 SC_PLAYERS=()
 declare -A SC_EVER_BOOTED=() SC_BOOT_HOW=() SC_SLOT=() SC_PASS=() SC_OFF=() SC_NAMED=() SC_BOOTED=() SC_IN=() SC_SHOTROW=() SC_PAIRIN=()
 # Rows, indexed by step number: status, call site, verb text, t+s, offsets, detail.
+declare -a SC_CONTENT_EXTRA=()
 declare -a SC_RSTAT=() SC_RLINE=() SC_RDESC=() SC_RT=() SC_ROFF=() SC_RDET=()
 
 # _sc_callsite — "<file>:<line>" of the first caller outside this library (steps.sh or hooks.sh).
@@ -1588,6 +1594,10 @@ _sc_run_one() {
     fi
     SC_SETUP_WHAT="selecting content profile $CONTENT"
     RIG_CONTENT_SOFT=1 rig_use_content "$CONTENT" || exit
+    if [ "${#SC_CONTENT_EXTRA[@]}" -gt 0 ]; then
+        SC_SETUP_WHAT="adding CONTENT_EXTRA"
+        rig_use_content_extra "${SC_CONTENT_EXTRA[@]}"
+    fi
     if [ "$PROBE" = 1 ] && ! rig_client_lua; then
         # A client that cannot load .omwscripts would be refused at login by the plugin check (the
         # probe is in requiredDataFiles.json): run without the probe instead; its verbs SKIP.
@@ -1885,6 +1895,23 @@ EOF
     mkdir -p "$t/s1b"; printf 'PLAYERS=a\nCONTENT=example\nPROBE_RANGE=far\n' > "$t/s1b/scenario.conf"
     if ( _sc_load_conf "$t/s1b" ); then _bad "conf: a non-numeric PROBE_RANGE is refused"
     else _check "conf: a non-numeric PROBE_RANGE is refused" "$( _sc_load_conf "$t/s1b"; echo "$SC_CONF_ERR")" "scenario.conf: PROBE_RANGE 'far' is not a distance in game units"; fi
+    # CONTENT_EXTRA: files relative to the scenario dir; a missing one is refused by name. The run
+    # appends data=<their dir> + content=<name> after the profile, and the same names to requiredDataFiles.
+    mkdir -p "$t/s1c/extra" "$t/cx/data" "$t/cs/data"; touch "$t/cx/base.esm" "$t/s1c/extra/room.omwaddon" "$t/s1c/extra/room.omwscripts"
+    printf 'PLAYERS=a\nCONTENT=cx\nCONTENT_EXTRA="extra/room.omwaddon extra/gone.esp"\n' > "$t/s1c/scenario.conf"
+    if ( _sc_load_conf "$t/s1c" ); then _bad "conf: a missing CONTENT_EXTRA file is refused"
+    else _check "conf: a missing CONTENT_EXTRA file is refused" "$( _sc_load_conf "$t/s1c"; echo "$SC_CONF_ERR")" "scenario.conf: CONTENT_EXTRA: no file extra/gone.esp in the scenario dir"; fi
+    printf 'PLAYERS=a\nCONTENT=cx\nCONTENT_EXTRA="extra/room.omwaddon extra/room.omwscripts"\n' > "$t/s1c/scenario.conf"
+    out=$( _sc_load_conf "$t/s1c" || exit 1
+           RIG_CONTENT_cx_DATA=$t/cx RIG_CONTENT_cx_FILES=base.esm RIG_CORESCRIPTS=$t/cs RIG_CONTENT_TARGET=profile
+           rig_use_content cx; rig_use_content_extra "${SC_CONTENT_EXTRA[@]}"
+           printf '%s|' "${RIG_CONTENT_LINES[@]}" "${RIG_CONTENT_FILES[@]}"; tr -d ' \n' < "$t/cs/data/requiredDataFiles.json" )
+    _check "conf: CONTENT_EXTRA appended after the profile, one data= per dir, and to requiredDataFiles" "$out" \
+        "data=\"$t/cx\"|content=base.esm|data=\"$t/s1c/extra\"|content=room.omwaddon|content=room.omwscripts|base.esm|room.omwaddon|room.omwscripts|[{\"builtin.omwscripts\":[]},{\"base.esm\":[]},{\"room.omwaddon\":[]},{\"room.omwscripts\":[]}]"
+    # shellcheck disable=SC2034  # read by rig_use_content through ${!key}
+    out=$( RIG_CONTENT_cx_DATA=$t/cx RIG_CONTENT_cx_FILES=base.esm RIG_CORESCRIPTS=$t/cs; rig_use_content cx
+           rig_use_content_extra "$t/cx/base.esm" 2>&1 ); rc=$?
+    _check "conf: a CONTENT_EXTRA name already in the content list dies" "$rc|$out" "1|rig: rig_use_content_extra: base.esm is already in the content list"
     printf 'NAME=x\nFOO=1\np_lower=2\n' > "$t/bad.conf"
     out=$(_sc_conf_check "$t/bad.conf"); rc=$?
     if [ "$rc" = 1 ] && grep -q 'unknown key FOO' <<<"$out" && grep -q 'unknown key p_lower' <<<"$out"; then _ok "conf: unknown keys rejected by name"

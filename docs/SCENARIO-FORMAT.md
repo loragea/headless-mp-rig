@@ -33,6 +33,7 @@ outside this list fails, except `P_<NAME>` (upper case, digits, `_`).
 | `PASSWORDS` | passwords in the same order | each player's name |
 | `TAGS` | free-form words; `bin/rig run --tag` selects on them, the rig never interprets them | — |
 | `CONTENT` | a content profile from `rig.conf` (`RIG_CONTENT_<name>_*`) | required |
+| `CONTENT_EXTRA` | extra content files for this scenario (plugins, `.omwscripts`), space-separated paths relative to the scenario dir. Each file's directory becomes a client `data=` line (once per directory; it should hold nothing that shadows game assets, so a subdirectory is safest) and its name a `content=` line, after the profile's files and before the probe, in the order listed; the same names go into the server's `requiredDataFiles.json` at the same positions. Every client and the server therefore see one load order, which TES3MP needs because it keys object state by reference number and content-file index. A missing file fails the run's conf check and `bin/rig lint`; a name already in the profile dies at setup. File names cannot contain spaces | none |
 | `FIXTURE` | server state to resume: a dir holding the six state subdirs; `.` = this dir, `-` = blank state | `.` |
 | `OVERLAY` | CoreScripts overlay dir, applied after the rig's own `overlay/` | none |
 | `PROBE` | `1` = load the client probe (§7) in every client: the probe verbs, `probe-<p>.log`, the probe's boot milestone. Needs an OpenMW ≥ 0.48 client (Lua player scripts); on an older client (no `builtin.omwscripts` in the build's resources, or `RIG_RDF_BUILTIN=0`) the run prints a note, turns the probe off and the probe verbs `SKIP` | `0` |
@@ -44,7 +45,7 @@ outside this list fails, except `P_<NAME>` (upper case, digits, `_`).
 | `WIGGLE` | `0` = do not start the idle wiggler after the first login | `1` |
 | `P_<NAME>` | a scenario parameter, exported to `steps.sh` as `$P_<NAME>` | — |
 
-Relative paths (`FIXTURE`, `OVERLAY`, `SETTINGS`) are relative to the scenario directory.
+Relative paths (`FIXTURE`, `OVERLAY`, `SETTINGS`, `CONTENT_EXTRA`) are relative to the scenario directory.
 `RIG_TRIPWIRES` is a rig constant: the server-log error lines that must never appear
 (`script error|Server crash|bad argument|luabridge|Error in frame`).
 
