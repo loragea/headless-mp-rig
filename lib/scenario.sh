@@ -995,6 +995,12 @@ _sc_run_one() {
     if ! msg=$(rig_content_check "$CONTENT"); then
         _sc_finalize_skip "content profile '$CONTENT' is not available: ${msg//$'\n'/; }"; exit
     fi
+    # One client profile per player in the run dir (profiles/<player>), unless rig.conf sets RIG_PROFILE*.
+    local i v
+    for i in "${!SC_PLAYERS[@]}"; do
+        v=RIG_PROFILE; [ "$i" = 0 ] || v=RIG_PROFILE$((i+1))
+        [ -n "${!v:-}" ] || printf -v "$v" '%s' "$SC_RUN/profiles/${SC_PLAYERS[i]}"
+    done
     [ "$PROBE" = 1 ] && _sc_say "note: PROBE=1 ignored (the client probe is not available yet)"
 
     SC_SETUP_WHAT="checking prerequisites"

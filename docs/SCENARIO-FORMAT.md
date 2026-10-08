@@ -208,6 +208,8 @@ $RIG_RUNS/<YYYYmmdd-HHMMSS>-<name|set>/     (or --out)
     server.log               server stdout
     server/                  config/openmw/tes3mp-server.cfg (run-scoped) and data/
     client-<p>.log           each client's stdout
+    profiles/<p>/            each client's isolated XDG profile: config/openmw/ (openmw.cfg, settings.cfg)
+                             and data/openmw/ (the client's own openmw.log)
     shots/<name>.png         captures + captures.tsv
     review/                  compare/logcheck output: diffs, candidate signatures
     checkpoints/<name>/      <p>.png and <p>.probe per checkpoint

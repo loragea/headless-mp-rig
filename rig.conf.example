@@ -73,9 +73,11 @@ RIG_SCREEN=1280x720x24
 # RIG_GEOM_UNCHECKED=0
 
 # Isolated client profiles (XDG_CONFIG_HOME/XDG_DATA_HOME per client), wiped at each client start.
-# RIG_PROFILE=/tmp/mp-rig-profile
-# RIG_PROFILE2=/tmp/mp-rig-profile2
-# RIG_PROFILE3=/tmp/mp-rig-profile3
+# Default: inside the run dir (<run>/profiles/<player>/ for `bin/rig run`, profiles/client<n>/ for
+# library consumers with a run dir), else /tmp/mp-rig-profile<n>. Set these only to pin a fixed path.
+# RIG_PROFILE=
+# RIG_PROFILE2=
+# RIG_PROFILE3=
 # Optional settings.cfg copied into every fresh profile (model remaps etc.).
 # RIG_SETTINGS_SRC=
 # Default capture() output dir when a test does not pass one.
