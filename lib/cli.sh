@@ -324,8 +324,15 @@ rig_cli_lint() {
 # ================================================================================================
 # explain
 # ================================================================================================
-# _cli_logfile <scenario run dir> <log key> — server -> server.log, <p> -> client-<p>.log.
-_cli_logfile() { if [ "$2" = server ]; then printf '%s/server.log' "$1"; else printf '%s/client-%s.log' "$1" "$2"; fi; }
+# _cli_logfile <scenario run dir> <log key> — server -> server.log, probe-<p> -> probe-<p>.log,
+# <p> -> client-<p>.log.
+_cli_logfile() {
+    case $2 in
+        server)  printf '%s/server.log' "$1" ;;
+        probe-*) printf '%s/%s.log' "$1" "$2" ;;
+        *)       printf '%s/client-%s.log' "$1" "$2" ;;
+    esac
+}
 # _cli_window <file> <start> <end> — the window as a line range plus its last lines (aligned to lines).
 _cli_window() {
     local file=$1 s=$2 e=$3 a b
@@ -352,7 +359,7 @@ _cli_explain_row() {
     read -r verb kind _ <<<"$desc"
     printf '  %-16s %s\n    -> %s %s\n' "$line" "$desc" "$st" "$det"
     # A searched window: offsets "log:start-end".
-    if [[ $off =~ ^([A-Za-z0-9_]+):([0-9]+)-([0-9]+)$ ]]; then
+    if [[ $off =~ ^([A-Za-z0-9_-]+):([0-9]+)-([0-9]+)$ ]]; then
         k=${BASH_REMATCH[1]}
         _cli_window "$(_cli_logfile "$r" "$k")" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
         if [[ $det == *"matches before the window"* ]] && [[ $det =~ ^no\ /(.*)/\ in\  ]]; then
@@ -380,12 +387,18 @@ _cli_explain_row() {
         pair)
             read -r _ _ p w _ <<<"$desc"
             echo "    open: $r/shots/$p.png and $r/shots/$w.png (the two frames that must differ)" ;;
+        probe)
+            echo "    open: $r/probe-$kind.log (the probe's lines; a request's lines carry its seq=<n>)" ;;
         assert)
+            case $kind in probe|probe-delta)
+                read -r _ _ p _ <<<"$desc"
+                echo "    open: $r/probe-$p.log (the seq named above: grep 'seq=<n> ' to see the whole line set)" ;;
+            esac
             [ "$kind" = json ] && echo "    the document lived in the CoreScripts work copy: re-run with --keep-work and open $r/corescripts/data/$(read -r _ _ w _ <<<"$desc"; printf '%s' "$w")" ;;
     esac
     # A file the detail names: "see client-a.log", "at server.log:12:", "diff /path".
-    for f in $(grep -oE '(client-[A-Za-z0-9_]+|server(-[0-9]+)?|run)\.log' <<<"$det" | sort -u); do
-        [ "$off" ] && [[ $off =~ ^[A-Za-z0-9_]+:[0-9]+-[0-9]+$ ]] && continue
+    for f in $(grep -oE '((client|probe)-[A-Za-z0-9_]+|server(-[0-9]+)?|run)\.log' <<<"$det" | sort -u); do
+        [ "$off" ] && [[ $off =~ ^[A-Za-z0-9_-]+:[0-9]+-[0-9]+$ ]] && continue
         _cli_tail "$r/$f"
     done
     if [[ $det =~ at\ ([A-Za-z0-9_.-]+\.log):([0-9]+): ]]; then

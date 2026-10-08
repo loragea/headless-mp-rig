@@ -36,9 +36,13 @@ fi
 export RIG_TRIPWIRES='script error|Server crash|bad argument|luabridge|Error in frame'
 RIG_LOGIN_CAP=${RIG_LOGIN_CAP:-30}                # login: secs to see the server's "[rig-bridge] player <p> in"
 RIG_CHAT_KEY=${RIG_CHAT_KEY:-F6}                  # hidechat: the client's chat-window toggle key
+RIG_BRIDGE_CAP=${RIG_BRIDGE_CAP:-5}               # setup verbs: secs for the server bridge to answer a command
+RIG_PROBE_CAP=${RIG_PROBE_CAP:-10}                # probe: secs for the client probe's [rigprobe:done] after the bridge sent it
 RIG_SCENARIOS=${RIG_SCENARIOS:-$RIG_ROOT/scenarios}   # --tag/--all search roots (space-separated)
 
 SC_DEFAULT_MARKERS=$LOG_MARKERS     # logcheck.sh's vocabulary, used when LOG_MARKERS is not set
+# The kinds the client probe answers (probe/scripts/rig/probe.lua); `dump` requests all of them.
+SC_PROBE_KINDS="cell stats quest topics inv nearby time weather"
 SC_CONF_KEYS="NAME PURPOSE PLAYERS PASSWORDS TAGS CONTENT FIXTURE OVERLAY PROBE SETTINGS LOG_MARKERS COST WIGGLE"
 SC_VERBS="boot login logout wiggle settle key hold type mouse click rmb look turn chat cast scroll hidechat
 console console-file console-object server save probe wait assert shot pair signature checkpoint mark note artifact"
@@ -226,13 +230,45 @@ _sc_infra() {
     return 1
 }
 
-# Logs: "server" and one key per player (its client log).
-_sc_logkeys() { printf '%s\n' server "${SC_PLAYERS[@]+"${SC_PLAYERS[@]}"}"; }
-_sc_logfile() {
-    if [ "$1" = server ]; then printf '%s' "${RIG_SRV_STDOUT:-$SC_RUN/server.log}"
-    else printf '%s' "$SC_RUN/client-$1.log"; fi
+# Logs: "server", one key per player (its client log) and, with PROBE=1, "probe-<p>" per player (the
+# [rigprobe:*] lines of that client's log, copied into probe-<p>.log by _sc_probe_sync).
+_sc_logkeys() {
+    local p
+    printf '%s\n' server "${SC_PLAYERS[@]+"${SC_PLAYERS[@]}"}"
+    if [ "${PROBE:-0}" = 1 ]; then for p in "${SC_PLAYERS[@]+"${SC_PLAYERS[@]}"}"; do printf 'probe-%s\n' "$p"; done; fi
 }
-_sc_size() { local s; s=$(stat -c %s "$1" 2>/dev/null) || s=0; printf '%s' "${s:-0}"; }
+_sc_logfile() {
+    case $1 in
+        server)  printf '%s' "${RIG_SRV_STDOUT:-$SC_RUN/server.log}" ;;
+        probe-*) printf '%s' "$SC_RUN/$1.log" ;;
+        *)       printf '%s' "$SC_RUN/client-$1.log" ;;
+    esac
+}
+# _sc_fresh <file> — bring a probe log up to date before it is read; other files are left alone.
+_sc_fresh() { case $1 in "$SC_RUN"/probe-*.log) local p=${1##*/probe-}; _sc_probe_sync "${p%.log}";; esac; return 0; }
+_sc_size() { local s; _sc_fresh "$1"; s=$(stat -c %s "$1" 2>/dev/null) || s=0; printf '%s' "${s:-0}"; }
+# _sc_probe_sync <p> — append the complete [rigprobe:*] lines the client log gained since the last call
+# to probe-<p>.log, each starting at "[rigprobe:" (the engine's print prefix is dropped). A partial
+# last line waits for the next call; a client log shorter than the saved offset (the client
+# restarted) is read from 0. State lives in files, so a call from a subshell counts.
+_sc_probe_sync() {
+    local p=$1 cl pl of off size tmp n part
+    [ -n "$SC_RUN" ] || return 0
+    cl=$SC_RUN/client-$p.log; pl=$SC_RUN/probe-$p.log; of=$SC_RUN/.probe-$p.off
+    [ -f "$pl" ] || : > "$pl"
+    off=$(cat "$of" 2>/dev/null); off=${off:-0}
+    size=$(stat -c %s "$cl" 2>/dev/null) || size=0
+    [ "$size" -lt "$off" ] && off=0
+    if [ "$size" -le "$off" ]; then echo "$off" > "$of"; return 0; fi
+    tmp=$SC_RUN/.probe-$p.chunk
+    tail -c +"$((off + 1))" "$cl" 2>/dev/null | head -c "$((size - off))" > "$tmp"
+    n=$(stat -c %s "$tmp" 2>/dev/null) || n=0
+    if [ -n "$(tail -c1 "$tmp")" ]; then part=$(tail -n1 "$tmp" | wc -c); n=$((n - part)); fi
+    [ "$n" -gt 0 ] && head -c "$n" "$tmp" | grep -a -o '\[rigprobe:[A-Za-z0-9_-]*\].*' >> "$pl"
+    echo "$((off + n))" > "$of"
+    rm -f "$tmp"
+    return 0
+}
 # _sc_mark_all [name] — advance every log's offset to its current end (and name the point).
 _sc_mark_all() {
     local k s
@@ -264,7 +300,7 @@ _sc_window_start() {
     printf '%s' "$o"
 }
 # _sc_grep_from <file> <offset> <ERE> — does the ERE match a line in the file past byte <offset>?
-_sc_grep_from() { grep -qE -- "$3" < <(tail -c +"$(( $2 + 1 ))" "$1" 2>/dev/null); }
+_sc_grep_from() { _sc_fresh "$1"; grep -qE -- "$3" < <(tail -c +"$(( $2 + 1 ))" "$1" 2>/dev/null); }
 # _sc_poll <cap> <cmd>... — run cmd until it succeeds or cap secs pass (at least one try).
 _sc_poll() {
     local cap=$1 t0=$SECONDS; shift
@@ -289,6 +325,32 @@ _sc_ac_e() { [ -n "${1:-}" ] || { echo "$2: no ERE"; return 1; }; }
 _sc_ac_cap() { [ -z "${1:-}" ] || _sc_ac_n "$1" "$2 cap"; }
 # _sc_ac_max <verb text> <argc> <max>
 _sc_ac_max() { [ "$2" -le "$3" ] || { echo "$1: $2 arguments, at most $3 — quote an argument holding spaces, and quote operators ('>=')"; return 1; }; }
+# _sc_ac_line <text> <verb> — a command that travels as one line of the bridge's command file.
+_sc_ac_line() { [[ $1 != *[$'\t\n\r']* ]] || { echo "$2: the command holds a tab or newline (one command per call; console-file for several)"; return 1; }; }
+# _sc_ac_kind <kind> <verb> [extra] — a probe kind the probe answers.
+_sc_ac_kind() {
+    case " $SC_PROBE_KINDS ${3:-} " in *" ${1:-} "*) [ -n "${1:-}" ] && return 0;; esac
+    echo "$2: '${1:-}' is not a probe kind ($SC_PROBE_KINDS${3:+ $3})"; return 1
+}
+# _sc_ac_cond <field><op><value> — a probe condition; ops = != < <= > >= ~ (quote < and >).
+_sc_ac_cond() {
+    _sc_probe_cond_parse "$1" && return 0
+    echo "assert probe: '$1' is not <field><op><value> with op = != < <= > >= ~ (quote it: 'dist<400')"; return 1
+}
+# _sc_ac_delta <p> <kind> <field> <op> <n> [<selector>...] [<seqA> <seqB>]
+_sc_ac_delta() {
+    local x nums=0
+    _sc_ac_p "${1:-}" || return 1; _sc_ac_kind "${2:-}" "assert probe-delta" || return 1
+    [[ ${3:-} =~ ^[A-Za-z_][A-Za-z0-9_.]*$ ]] || { echo "assert probe-delta: expected <p> <kind> <field> <op> <n> [<selector>...] [<seqA> <seqB>]"; return 1; }
+    case ${4:-} in =|'!='|'<'|'<='|'>'|'>=') ;; *) echo "assert probe-delta: operator '${4:-}' is not one of = != < <= > >= (quote it: '<')"; return 1;; esac
+    [[ ${5:-} =~ ^-?[0-9]+([.][0-9]+)?$ ]] || { echo "assert probe-delta: '${5:-}' is not a number"; return 1; }
+    for x in "${@:6}"; do
+        if [[ $x =~ ^[0-9]+$ ]]; then nums=$((nums + 1))
+        elif [ "$nums" -gt 0 ]; then echo "assert probe-delta: the two request seqs come last"; return 1
+        else _sc_ac_cond "$x" || return 1; fi
+    done
+    case $nums in 0|2) ;; *) echo "assert probe-delta: give two request seqs or none (got $nums)"; return 1;; esac
+}
 _sc_ac_op() { case ${1:-} in =|==|'!='|'<'|'<='|'>'|'>=') ;; *) echo "assert count: operator '${1:-}' is not one of = == != < <= > >= (quote it: '>=')"; return 1;; esac; }
 # _sc_argcheck <verb> <args>... — echo the first problem with a verb call's arguments; 1 if any.
 _sc_argcheck() {
@@ -331,20 +393,26 @@ _sc_argcheck() {
                     [ $# = 6 ] && [ "$1" = until ] && [ "$2" = server ] && [ -n "$3" ] && _sc_is_num "$4" && [ "$5" = tries ] && [[ $6 =~ ^[0-9]+$ ]] \
                         || { echo "scroll: expected scroll <p> <quickkey> [<closekey>|none] [until server <ERE> <cap> tries <n>]"; return 1; }
                 fi ;;
-        console|server) _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "$v: no command"; return 1; }; _sc_ac_max "$v" $# 2 ;;
+        console|server) _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "$v: no command"; return 1; }
+                [ "$v" = server ] || _sc_ac_line "${2:-}" console || return 1
+                _sc_ac_max "$v" $# 2 ;;
         console-file) _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "console-file: no file"; return 1; }
                 [ -f "$SC_DIR/$2" ] || { echo "console-file: no file $2 in the scenario dir"; return 1; }
                 _sc_ac_max console-file $# 2 ;;
         console-object) _sc_ac_p "${1:-}" || return 1
-                [ $# = 4 ] || { echo "console-object: expected <p> \"<cell>\" <refnum-mpnum> \"<cmd>\""; return 1; } ;;
-        save)   if [ "${1:-}" = cell ]; then [ -n "${2:-}" ] || { echo "save cell: no cell"; return 1; }; _sc_ac_max save $# 2
+                [ $# = 4 ] || { echo "console-object: expected <p> \"<cell>\" <refnum-mpnum> \"<cmd>\""; return 1; }
+                [[ $3 =~ ^[0-9]+-[0-9]+$ ]] || { echo "console-object: '$3' is not <refnum>-<mpnum> (e.g. 0-12)"; return 1; }
+                _sc_ac_line "$2" console-object || return 1; _sc_ac_line "$4" console-object || return 1 ;;
+        save)   if [ "${1:-}" = cell ]; then [ -n "${2:-}" ] || { echo "save cell: no cell"; return 1; }
+                    _sc_ac_line "$2" "save cell" || return 1; _sc_ac_max save $# 2
                 else _sc_ac_p "${1:-}" || return 1; _sc_ac_max save $# 1; fi ;;
-        probe)  _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "probe: no kind"; return 1; }; _sc_ac_max probe $# 2 ;;
+        probe)  _sc_ac_p "${1:-}" || return 1; _sc_ac_kind "${2:-}" probe dump || return 1; _sc_ac_max probe $# 2 ;;
         wait)   case ${1:-} in
                     server) _sc_ac_e "${2:-}" "wait server" || return 1; _sc_ac_cap "${3:-}" "wait server" || return 1; _sc_ac_max "wait server" $# 3 ;;
                     client) _sc_ac_p "${2:-}" || return 1; _sc_ac_e "${3:-}" "wait client" || return 1
                             _sc_ac_cap "${4:-}" "wait client" || return 1; _sc_ac_max "wait client" $# 4 ;;
-                    probe)  _sc_ac_p "${2:-}" || return 1 ;;
+                    probe)  _sc_ac_p "${2:-}" || return 1; _sc_ac_e "${3:-}" "wait probe" || return 1
+                            _sc_ac_cap "${4:-}" "wait probe" || return 1; _sc_ac_max "wait probe" $# 4 ;;
                     stable) _sc_ac_p "${2:-}" || return 1; [ -z "${3:-}" ] || _sc_ac_g "$3" "wait stable" || return 1
                             for x in "${@:4}"; do _sc_ac_n "$x" "wait stable" || return 1; done
                             _sc_ac_max "wait stable" $# 6 ;;
@@ -367,7 +435,10 @@ _sc_argcheck() {
                             [ $# = 3 ] || { echo "assert count: expected <fixed> <op> <n> after the log, got $# argument(s) (quote the operator: '>=')"; return 1; }
                             _sc_ac_op "$2" || return 1
                             [[ $3 =~ ^[0-9]+$ ]] || { echo "assert count: <n> '$3' is not a count"; return 1; } ;;
-                    probe|probe-delta) _sc_ac_p "${2:-}" || return 1 ;;
+                    probe)  _sc_ac_p "${2:-}" || return 1; _sc_ac_kind "${3:-}" "assert probe" || return 1
+                            [ $# -ge 4 ] || { echo "assert probe: expected <p> <kind> <field><op><value>... (e.g. actor=b 'dist<400')"; return 1; }
+                            for x in "${@:4}"; do _sc_ac_cond "$x" || return 1; done ;;
+                    probe-delta) shift; _sc_ac_delta "$@" || return 1 ;;
                     json)   [ -n "${2:-}" ] && [ -n "${3:-}" ] || { echo "assert json: expected <relpath> '<python expression>'"; return 1; }
                             _sc_ac_max "assert json" $# 3 ;;
                     *) echo "assert: expected server|client|absent|count|probe|probe-delta|json, got '${1:-}'"; return 1 ;;
@@ -470,10 +541,20 @@ _sc_boot_impl() {
     SC_BOOT_MSG=$out
 }
 
-# _sc_boot_ready <p> <deadline> — echo "milestone" or "stable frame" once the client is ready; 1 at the deadline.
+# _sc_boot_ready <p> <deadline> — echo "probe ready", "milestone" or "stable frame" once the client is
+# ready; 1 at the deadline. With PROBE=1 only the probe's [rigprobe:ready] line counts: it is printed on
+# the first frame the player script runs, in the world.
 _sc_boot_ready() {
     local p=$1 deadline=$2 log disp tdir prev='' cur d m same=0
-    log=$SC_RUN/client-$p.log; disp=$(_sc_disp "$p"); tdir=$(mktemp -d)
+    log=$SC_RUN/client-$p.log; disp=$(_sc_disp "$p")
+    if [ "${PROBE:-0}" = 1 ]; then
+        while (( SECONDS < deadline )); do
+            grep -aq '\[rigprobe:ready\]' "$log" 2>/dev/null && { echo "probe ready"; return 0; }
+            sleep 1
+        done
+        return 1
+    fi
+    tdir=$(mktemp -d)
     while (( SECONDS < deadline )); do
         if grep -q 'Sending ID_PLAYER_MAP' "$log" 2>/dev/null; then rm -rf "$tdir"; echo milestone; return 0; fi
         cur=$tdir/$SECONDS.png
@@ -634,15 +715,299 @@ _scv_hidechat() {
 }
 
 # ================================================================================================
-# Setup verbs — need the server bridge's command channel (not available yet): SKIP, still mark
+# Setup verbs — commands pushed through the server bridge (overlay/scripts/custom/rig-bridge.lua)
 # ================================================================================================
-_sc_bridge_stub() { _sc_mark_all; _sc_close_row SKIP "bridge: not implemented"; }
-_scv_console()        { _sc_begin console "$@"        || return 0; _sc_bridge_stub; }
-_scv_console_file()   { _sc_begin console-file "$@"   || return 0; _sc_bridge_stub; }
-_scv_console_object() { _sc_begin console-object "$@" || return 0; _sc_bridge_stub; }
-_scv_server()         { _sc_begin server "$@"         || return 0; _sc_bridge_stub; }
-_scv_save()           { _sc_begin save "$@"           || return 0; _sc_bridge_stub; }
-_scv_probe()          { _sc_begin probe "$@"          || return 0; _sc_bridge_stub; }
+# The command file protocol, in <run>/bridge/ (the server reads RIG_BRIDGE_DIR):
+#   cmd-<seq>.meta  one line, tab-separated: <verb> <player> <arg>...  (renamed into place: atomic)
+#   cmd-<seq>.lua   the body of a `lua` command (written before the .meta)
+#   done-<seq> / err-<seq>  the bridge's answer: one line of detail
+# seq counts 1, 2, 3 ... per run; the bridge executes them in order. A probe request's seq is the
+# seq the client probe echoes in its lines.
+SC_BRIDGE_SEQ=0 SC_BRIDGE_REPLY=''
+_sc_bridge_answered() { [ -f "$1/done-$2" ] || [ -f "$1/err-$2" ]; }
+# _sc_bridge_send <verb> <player> [arg]... [--body <text>] — write one command and await its answer.
+# Returns 0 done, 1 err (SC_BRIDGE_REPLY holds the message), 2 no answer within RIG_BRIDGE_CAP.
+_sc_bridge_send() {
+    local dir=$SC_RUN/bridge seq body='' have_body=0 line
+    local -a f=()
+    while [ $# -gt 0 ]; do
+        if [ "$1" = --body ]; then body=${2:-}; have_body=1; shift 2; continue; fi
+        f+=("$1"); shift
+    done
+    mkdir -p "$dir"
+    seq=$((SC_BRIDGE_SEQ + 1)); SC_BRIDGE_SEQ=$seq; SC_BRIDGE_REPLY=''
+    [ "$have_body" = 1 ] && printf '%s\n' "$body" > "$dir/cmd-$seq.lua"
+    line=$(IFS=$'\t'; printf '%s' "${f[*]}")
+    printf '%s\n' "$line" > "$dir/.cmd-$seq.tmp" && mv "$dir/.cmd-$seq.tmp" "$dir/cmd-$seq.meta"
+    if ! _sc_poll "$RIG_BRIDGE_CAP" _sc_bridge_answered "$dir" "$seq"; then return 2; fi
+    if [ -f "$dir/done-$seq" ]; then SC_BRIDGE_REPLY=$(head -c 300 "$dir/done-$seq"); return 0; fi
+    SC_BRIDGE_REPLY=$(head -c 300 "$dir/err-$seq"); return 1
+}
+_sc_bridge_timeout() {
+    _sc_infra "the server bridge did not answer command $SC_BRIDGE_SEQ within RIG_BRIDGE_CAP=${RIG_BRIDGE_CAP}s (bridge/cmd-$SC_BRIDGE_SEQ.meta unanswered; server.log should show '[rig-bridge] commands from')"
+}
+# _sc_setup_ready <p> — the player's client runs and the server logged it in; else a FAIL row.
+_sc_setup_ready() {
+    _sc_need_client "${1:-}" || return 1
+    [ -n "${SC_IN[$1]:-}" ] || { _sc_row FAIL "" "$1 is not logged in (the server pushes the command to a logged-in player: login $1 first)"; return 1; }
+    return 0
+}
+# _sc_bridge_row <verb> <player> [arg]... — send one command and close the row with its answer.
+_sc_bridge_row() {
+    local rc=0
+    _sc_bridge_send "$@" || rc=$?
+    case $rc in
+        0) _sc_close_row OK "bridge $SC_BRIDGE_SEQ: $SC_BRIDGE_REPLY" ;;
+        1) _sc_close_row FAIL "bridge $SC_BRIDGE_SEQ refused: $SC_BRIDGE_REPLY" ;;
+        *) _sc_bridge_timeout ;;
+    esac
+}
+_scv_console() {
+    _sc_begin console "$@" || return 0
+    _sc_setup_ready "${1:-}" || return 1
+    _sc_mark_all
+    _sc_bridge_row console "$1" "${2:-}"
+}
+_scv_console_object() {
+    _sc_begin console-object "$@" || return 0
+    _sc_setup_ready "${1:-}" || return 1
+    _sc_mark_all
+    _sc_bridge_row object "$1" "$2" "$3" "$4"
+}
+_scv_server() {
+    _sc_begin server "$@" || return 0
+    _sc_setup_ready "${1:-}" || return 1
+    _sc_mark_all
+    _sc_bridge_row lua "$1" --body "${2:-}"
+}
+_scv_save() {
+    _sc_begin save "$@" || return 0
+    if [ "${1:-}" = cell ]; then
+        [ -n "${RIG_SRV:-}" ] || { _sc_row FAIL "" "save cell: no server (boot a player first)"; return 1; }
+        _sc_mark_all
+        _sc_bridge_row savecell - "${2:-}"
+    else
+        _sc_setup_ready "${1:-}" || return 1
+        _sc_mark_all
+        _sc_bridge_row save "$1"
+    fi
+}
+# console-file <p> <file> — every line that is not blank or a # comment, in order, one bridge command each.
+_scv_console_file() {
+    _sc_begin console-file "$@" || return 0
+    local p=${1:-} file=$SC_DIR/${2:-} line n=0 sent=0 first='' rc
+    _sc_setup_ready "$p" || return 1
+    [ -f "$file" ] || { _sc_row FAIL "" "console-file: no file ${2:-} in the scenario dir"; return 1; }
+    _sc_mark_all
+    while IFS= read -r line || [ -n "$line" ]; do
+        n=$((n + 1)); line=${line%$'\r'}
+        [[ $line =~ ^[[:space:]]*(#.*)?$ ]] && continue
+        rc=0; _sc_bridge_send console "$p" "$line" || rc=$?
+        first=${first:-$SC_BRIDGE_SEQ}
+        case $rc in
+            0) sent=$((sent + 1)) ;;
+            1) _sc_close_row FAIL "${2}:$n: bridge $SC_BRIDGE_SEQ refused: $SC_BRIDGE_REPLY"; return 1 ;;
+            *) _sc_bridge_timeout; return 1 ;;
+        esac
+    done < "$file"
+    _sc_close_row OK "$sent command(s) from ${2}${first:+ (bridge $first-$SC_BRIDGE_SEQ)}"
+}
+
+# ================================================================================================
+# Client probe — requests by seq, line sets, conditions
+# ================================================================================================
+# Probe requests per player: "<seq>:<kind>" words, oldest first (a `dump` answers every kind).
+declare -A SC_PROBE_REQS=()
+# _sc_probe_usable <p> — 0 when the client probe is loaded on p; else SC_PROBE_WHY says why not.
+_sc_probe_usable() {
+    local p=$1
+    SC_PROBE_WHY=''
+    if [ "${PROBE:-0}" != 1 ]; then SC_PROBE_WHY="probe: off (PROBE=1 in scenario.conf loads it)"; return 1; fi
+    if ! grep -aq '^\[rigprobe:ready\]' "$(_sc_logfile "probe-$p")" 2>/dev/null; then
+        SC_PROBE_WHY="probe: client $p never logged [rigprobe:ready] (a client without OpenMW Lua player scripts, or the probe failed to load: see client-$p.log)"
+        return 1
+    fi
+    return 0
+}
+# _sc_probe_caps <p> — the caps= list of the client's last ready line.
+_sc_probe_caps() {
+    local line
+    line=$(grep -a '^\[rigprobe:ready\]' "$(_sc_logfile "probe-$1")" 2>/dev/null | tail -1)
+    _sc_probe_tokens "$line" 2>/dev/null | sed -n 's/^caps=//p'
+}
+# _sc_probe_need_caps <p> <cap>... — 0 if every cap is present; else SC_PROBE_WHY names the first missing.
+_sc_probe_need_caps() {
+    local p=$1 caps c; shift
+    caps=",$(_sc_probe_caps "$p"),"
+    for c in "$@"; do
+        case $caps in *",$c,"*) ;; *) SC_PROBE_WHY="probe: client $p lacks cap '$c' (caps=${caps:1:${#caps}-2})"; return 1;; esac
+    done
+    return 0
+}
+# The cap a field needs beyond its kind's.
+_sc_probe_field_cap() { case $1 in anim|animup) echo anim;; lock|locked) echo lock;; stance) echo stance;; esac; }
+# _sc_probe_lines <p> <kind> <seq> — the request's lines of that kind (raw, from probe-<p>.log).
+_sc_probe_lines() {
+    local line s
+    while IFS= read -r line; do
+        s=$(_sc_probe_tokens "$line" 2>/dev/null | sed -n 's/^seq=//p' | head -1)
+        [ "$s" = "$3" ] && printf '%s\n' "$line"
+    done < <(grep -a "^\\[rigprobe:$2\\] " "$(_sc_logfile "probe-$1")" 2>/dev/null)
+}
+# _sc_probe_last <p> <kind> [n] — the seq of the n-th last request (default 1) that answered <kind>.
+_sc_probe_last() {
+    local -a hits=()
+    local n=${3:-1} w
+    for w in ${SC_PROBE_REQS[$1]:-}; do
+        case ${w#*:} in "$2"|dump) hits+=("${w%%:*}");; esac
+    done
+    [ "${#hits[@]}" -ge "$n" ] || return 1
+    printf '%s' "${hits[${#hits[@]}-n]}"
+}
+# _sc_probe_request <p> <kind> — push "lua rigprobe <kind> <seq>" through the bridge and await the
+# client's [rigprobe:done] ... seq=<seq>. Returns 0 answered, 1 bridge refused, 2 bridge silent,
+# 3 client silent. SC_PROBE_SEQ = the request's seq.
+_sc_probe_request() {
+    local p=$1 kind=$2 rc=0
+    _sc_bridge_send probe "$p" "$kind" || rc=$?
+    SC_PROBE_SEQ=$SC_BRIDGE_SEQ
+    [ "$rc" = 0 ] || return "$rc"
+    _sc_poll "$RIG_PROBE_CAP" _sc_grep_from "$(_sc_logfile "probe-$p")" 0 "^\\[rigprobe:done\\] .*seq=$SC_PROBE_SEQ( |\$)" || return 3
+    SC_PROBE_REQS[$p]="${SC_PROBE_REQS[$p]:-} $SC_PROBE_SEQ:$kind"
+    return 0
+}
+# _sc_probe_request_row <p> <kind> — a request whose failure closes the current row; 0 when answered.
+_sc_probe_request_row() {
+    local rc=0
+    _sc_probe_request "$1" "$2" || rc=$?
+    case $rc in
+        0) return 0 ;;
+        1) _sc_row FAIL "" "probe $1 $2: bridge $SC_PROBE_SEQ refused: $SC_BRIDGE_REPLY" ;;
+        2) _sc_bridge_timeout ;;
+        *) _sc_row FAIL "" "probe $1 $2: client $1 did not answer seq $SC_PROBE_SEQ within RIG_PROBE_CAP=${RIG_PROBE_CAP}s (no '[rigprobe:done] ... seq=$SC_PROBE_SEQ' in probe-$1.log; see client-$1.log)" ;;
+    esac
+    return 1
+}
+# probe <p> <kind|dump> — request a probe report; later `assert probe` reads its lines. An observation:
+# it does not move the mark.
+_scv_probe() {
+    _sc_begin probe "$@" || return 0
+    local p=${1:-} kind=${2:-} last n miss
+    _sc_need_client "$p" || return 1
+    _sc_probe_usable "$p" || { _sc_row SKIP "" "$SC_PROBE_WHY"; return 0; }
+    _sc_setup_ready "$p" || return 1
+    _sc_probe_request_row "$p" "$kind" || return 1
+    last=$(_sc_probe_lines "$p" 'done' "$SC_PROBE_SEQ" | tail -1)
+    n=$(_sc_probe_field "$last" lines); miss=$(_sc_probe_field "$last" missing)
+    _sc_row OK "" "seq $SC_PROBE_SEQ: ${n:-?} line(s) in probe-$p.log${miss:+; not available on this client: $miss}"
+}
+# _sc_probe_cond_parse <field><op><value> — sets SC_C_FIELD SC_C_OP SC_C_VAL.
+_sc_probe_cond_parse() {
+    [[ ${1:-} =~ ^([A-Za-z_][A-Za-z0-9_.]*)(!=|<=|>=|=|<|>|~)(.*)$ ]] || return 1
+    SC_C_FIELD=${BASH_REMATCH[1]} SC_C_OP=${BASH_REMATCH[2]} SC_C_VAL=${BASH_REMATCH[3]}
+}
+_sc_is_signed() { [[ $1 =~ ^-?[0-9]+([.][0-9]+)?$ ]]; }
+# _sc_probe_cmp <actual> <op> <want> — = and != compare numbers numerically when both are numbers,
+# else as strings; < <= > >= need two numbers; ~ is an ERE match.
+_sc_probe_cmp() {
+    local a=$1 op=$2 w=$3
+    case $op in
+        '~')  [[ $a =~ $w ]] ;;
+        '='|'!=')
+            local eq=1
+            if _sc_is_signed "$a" && _sc_is_signed "$w"; then awk -v a="$a" -v b="$w" 'BEGIN{exit !(a+0 == b+0)}' && eq=0
+            else [ "$a" = "$w" ] && eq=0; fi
+            if [ "$op" = '=' ]; then return "$eq"; else [ "$eq" != 0 ]; fi ;;
+        *)    _sc_is_signed "$a" && _sc_is_signed "$w" || return 1
+              awk -v a="$a" -v b="$w" -v op="$op" 'BEGIN{
+                  if (op == "<") r = a+0 < b+0; else if (op == "<=") r = a+0 <= b+0
+                  else if (op == ">") r = a+0 > b+0; else r = a+0 >= b+0
+                  exit !r }' ;;
+    esac
+}
+# _sc_probe_line_ok <line> <cond>... — every condition holds on the line's fields.
+_sc_probe_line_ok() {
+    local line=$1 kv c; shift
+    declare -A fld=()
+    while IFS= read -r kv; do fld[${kv%%=*}]=${kv#*=}; done < <(_sc_probe_tokens "$line")
+    for c in "$@"; do
+        _sc_probe_cond_parse "$c" || return 1
+        [ -n "${fld[$SC_C_FIELD]+x}" ] || return 1
+        _sc_probe_cmp "${fld[$SC_C_FIELD]}" "$SC_C_OP" "$SC_C_VAL" || return 1
+    done
+    return 0
+}
+# _sc_probe_field <line> <field> — print the field's value; 1 when the line has no such field.
+_sc_probe_field() {
+    local kv
+    while IFS= read -r kv; do [ "${kv%%=*}" = "$2" ] && { printf '%s' "${kv#*=}"; return 0; }; done < <(_sc_probe_tokens "$1")
+    return 1
+}
+# _sc_probe_quote <lines> — a request's line set for a FAIL detail: the first lines, "|"-joined, short.
+_sc_probe_quote() {
+    local q
+    q=$(head -4 <<<"$1" | sed 's/^\[rigprobe:[^]]*\] p=[^ ]* t=[^ ]* seq=[0-9]* //' | paste -sd'|')
+    [ "$(grep -c '' <<<"$1")" -gt 4 ] && q="$q|..."
+    printf '%s' "${q:0:400}"
+}
+# _sc_probe_precheck <p> <kind> <field>... — the SKIP checks every probe assertion shares. Returns 1
+# after writing a SKIP row.
+_sc_probe_precheck() {
+    local p=$1 kind=$2 f c; shift 2
+    local -a need=("$kind")
+    for f in "$@"; do c=$(_sc_probe_field_cap "$f"); [ -n "$c" ] && need+=("$c"); done
+    if ! _sc_probe_usable "$p" || ! _sc_probe_need_caps "$p" "${need[@]}"; then _sc_row SKIP "" "$SC_PROBE_WHY"; return 1; fi
+    return 0
+}
+# assert probe <p> <kind> <cond>... — PASS when one line of the last request answering <kind> meets
+# every condition.
+_sc_assert_probe() {
+    local p=${1:-} kind=${2:-} seq lines line c
+    local -a fields=()
+    shift 2
+    for c in "$@"; do _sc_probe_cond_parse "$c" && fields+=("$SC_C_FIELD"); done
+    _sc_probe_precheck "$p" "$kind" "${fields[@]+"${fields[@]}"}" || return 0
+    seq=$(_sc_probe_last "$p" "$kind") || { _sc_row FAIL "" "assert probe: no 'probe $p $kind' (or dump) request before this assert"; return 1; }
+    lines=$(_sc_probe_lines "$p" "$kind" "$seq")
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        if _sc_probe_line_ok "$line" "$@"; then
+            _sc_row PASS "" "seq $seq: ${line:0:300}"; return 0
+        fi
+    done <<<"$lines"
+    if [ -z "$lines" ]; then _sc_row FAIL "" "seq $seq: no $kind line with $*: the request answered no $kind lines"
+    else _sc_row FAIL "" "seq $seq: no $kind line with $* among $(grep -c . <<<"$lines") line(s): $(_sc_probe_quote "$lines")"; fi
+}
+# assert probe-delta <p> <kind> <field> <op> <n> [<selector>...] [<seqA> <seqB>] — the field's value in
+# request B minus request A (default: the last two requests answering <kind>), compared with <n>. In
+# each request the first line meeting the selectors and holding the field is used.
+_sc_assert_probe_delta() {
+    local p=${1:-} kind=${2:-} field=${3:-} op=${4:-} want=${5:-} sa sb a b d line x
+    local -a sel=() nums=()
+    shift 5
+    for x in "$@"; do if [[ $x =~ ^[0-9]+$ ]]; then nums+=("$x"); else sel+=("$x"); fi; done
+    _sc_probe_precheck "$p" "$kind" "$field" || return 0
+    if [ "${#nums[@]}" = 2 ]; then sa=${nums[0]}; sb=${nums[1]}
+    else
+        sa=$(_sc_probe_last "$p" "$kind" 2) && sb=$(_sc_probe_last "$p" "$kind" 1) \
+            || { _sc_row FAIL "" "assert probe-delta: needs two 'probe $p $kind' requests before it"; return 1; }
+    fi
+    for x in a b; do
+        local s; if [ "$x" = a ]; then s=$sa; else s=$sb; fi
+        local v=''
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            _sc_probe_line_ok "$line" "${sel[@]+"${sel[@]}"}" || continue
+            v=$(_sc_probe_field "$line" "$field") && _sc_is_signed "$v" && break
+            v=''
+        done < <(_sc_probe_lines "$p" "$kind" "$s")
+        [ -n "$v" ] || { _sc_row FAIL "" "assert probe-delta: seq $s has no $kind line with a numeric $field${sel[*]:+ and ${sel[*]}}"; return 1; }
+        if [ "$x" = a ]; then a=$v; else b=$v; fi
+    done
+    d=$(awk -v a="$a" -v b="$b" 'BEGIN{ printf "%g", b - a }')
+    if _sc_probe_cmp "$d" "$op" "$want"; then _sc_row PASS "" "$field: $a (seq $sa) -> $b (seq $sb), delta $d $op $want"
+    else _sc_row FAIL "" "$field: $a (seq $sa) -> $b (seq $sb), delta $d, wanted $op $want"; fi
+}
 
 # ================================================================================================
 # Waits and assertions
@@ -688,7 +1053,10 @@ _scv_wait() {
         client) p=${2:-}; _sc_known "$p" || { _sc_row FAIL "" "wait client: unknown player '$p'"; return 1; }
                 [ -n "${3:-}" ] || { _sc_row FAIL "" "wait client: no ERE"; return 1; }
                 _sc_window_match "$p" "$3" "${4:-10}" FAIL ;;
-        probe)  _sc_row SKIP "" "probe: not available" ;;
+        probe)  p=${2:-}; _sc_known "$p" || { _sc_row FAIL "" "wait probe: unknown player '$p'"; return 1; }
+                [ -n "${3:-}" ] || { _sc_row FAIL "" "wait probe: no ERE"; return 1; }
+                _sc_probe_usable "$p" || { _sc_row SKIP "" "$SC_PROBE_WHY"; return 0; }
+                _sc_window_match "probe-$p" "$3" "${4:-10}" FAIL ;;
         stable) _sc_wait_stable "${@:2}" ;;
         *)      _sc_row FAIL "" "wait: expected server|client|probe|stable, got '$src'"; return 1 ;;
     esac
@@ -749,7 +1117,8 @@ _scv_assert() {
             if [ "$rc" = 2 ]; then _sc_row FAIL "" "assert count: unknown op '${2:-}' (= == != < <= > >=)"
             elif [ "$rc" = 0 ]; then _sc_row PASS "$k:0-$(_sc_size "$file")" "count('${1:-}')=$c $2 $3 in ${file##*/}"
             else _sc_row FAIL "$k:0-$(_sc_size "$file")" "count('${1:-}')=$c in ${file##*/}, wanted $2 $3"; fi ;;
-        probe|probe-delta) _sc_row SKIP "" "probe: not available" ;;
+        probe)       _sc_assert_probe "${@:2}" ;;
+        probe-delta) _sc_assert_probe_delta "${@:2}" ;;
         json) _sc_assert_json "${2:-}" "${3:-}" ;;
         *) _sc_row FAIL "" "assert: expected server|client|absent|count|probe|probe-delta|json, got '$kind'"; return 1 ;;
     esac
@@ -837,11 +1206,11 @@ _scv_signature() {
     fi
     case $rc in 0) _sc_row PASS "" "$msg";; 1) _sc_row REGRESSION "" "$msg";; *) _sc_row FAIL "" "$msg";; esac
 }
-# checkpoint <name> [sp|mp-only] [divergent] — a full-screen shot per logged-in player; the probe dump
-# is a placeholder until the client probe exists.
+# checkpoint <name> [sp|mp-only] [divergent] — per logged-in player: a full-screen shot and a probe
+# dump (every kind, awaited by its seq) into checkpoints/<name>/<p>.png and <p>.probe.
 _scv_checkpoint() {
     _sc_begin checkpoint "$@" || return 0
-    local name=${1:-} mode=${2:-} div=${3:-} dir p n=0
+    local name=${1:-} mode=${2:-} div=${3:-} dir p n=0 rc det=''
     [ -n "$name" ] || { _sc_row FAIL "" "checkpoint: no name"; return 1; }
     case $mode in ''|sp|mp-only) ;; *) _sc_row FAIL "" "checkpoint: mode must be sp or mp-only"; return 1;; esac
     case $div in ''|divergent) ;; *) _sc_row FAIL "" "checkpoint: third argument must be 'divergent'"; return 1;; esac
@@ -849,11 +1218,29 @@ _scv_checkpoint() {
     for p in "${SC_PLAYERS[@]}"; do
         [ -n "${SC_IN[$p]:-}" ] || continue
         rig_grab_region "$(_sc_disp "$p")" FULL "$dir/$p.png"
-        printf '# checkpoint %s player %s mode=%s %s\n# probe dump not available (no client probe)\n' \
-            "$name" "$p" "${mode:-sp}" "$div" > "$dir/$p.probe"
+        printf '# checkpoint %s player %s mode=%s %s\n' "$name" "$p" "${mode:-sp}" "$div" > "$dir/$p.probe"
+        if _sc_probe_usable "$p"; then
+            rc=0; _sc_probe_request "$p" dump || rc=$?
+            case $rc in
+                0) _sc_probe_lines_all "$p" "$SC_PROBE_SEQ" >> "$dir/$p.probe" ;;
+                2) _sc_bridge_timeout; return 1 ;;
+                *) _sc_row FAIL "" "checkpoint $name: probe dump of $p failed (seq $SC_PROBE_SEQ${SC_BRIDGE_REPLY:+: $SC_BRIDGE_REPLY})"; return 1 ;;
+            esac
+            det="$det $p:seq $SC_PROBE_SEQ"
+        else
+            echo "# no probe dump: $SC_PROBE_WHY" >> "$dir/$p.probe"
+        fi
         n=$((n+1))
     done
-    _sc_row OK "" "checkpoints/$name: $n player(s)"
+    _sc_row OK "" "checkpoints/$name: $n player(s)${det:+; probe dumps$det}"
+}
+# _sc_probe_lines_all <p> <seq> — every line of one request (all kinds, the done line last).
+_sc_probe_lines_all() {
+    local line s
+    while IFS= read -r line; do
+        s=$(_sc_probe_tokens "$line" 2>/dev/null | sed -n 's/^seq=//p' | head -1)
+        [ "$s" = "$2" ] && printf '%s\n' "$line"
+    done < "$(_sc_logfile "probe-$1")"
 }
 
 # ================================================================================================
@@ -930,6 +1317,10 @@ _sc_finalize() {
         { echo "$SC_TSV_HEADER"; for i in "${!SC_RSTAT[@]}"; do _sc_row_text "$i"; echo; done; } > "$SC_RUN/steps.tsv"
         _sc_result_line "$status" "$code" "${SC_NAME:-?}" "$fails" "$regs" "$SC_ATTEMPT" > "$SC_RUN/RESULT"
         rm -f "$SC_RUN"/.baseline-*.png
+        if [ "${PROBE:-0}" = 1 ]; then
+            for i in "${SC_PLAYERS[@]+"${SC_PLAYERS[@]}"}"; do [ -n "${SC_EVER_BOOTED[$i]:-}" ] && _sc_probe_sync "$i"; done
+            rm -f "$SC_RUN"/.probe-*.off
+        fi
         _sc_copy_profiles
     fi
     SC_RESULT=$(_sc_result_line "$status" "$code" "${SC_NAME:-?}" "$fails" "$regs" "$SC_ATTEMPT")
@@ -1013,7 +1404,6 @@ _sc_run_one() {
     if ! msg=$(rig_content_check "$CONTENT"); then
         _sc_finalize_skip "content profile '$CONTENT' is not available: ${msg//$'\n'/; }"; exit
     fi
-    [ "$PROBE" = 1 ] && _sc_say "note: PROBE=1 ignored (the client probe is not available yet)"
 
     SC_SETUP_WHAT="checking prerequisites"
     if ! msg=$( (rig_check_prereqs) 2>&1 ); then
@@ -1032,6 +1422,12 @@ _sc_run_one() {
     fi
     SC_SETUP_WHAT="selecting content profile $CONTENT"
     RIG_CONTENT_SOFT=1 rig_use_content "$CONTENT" || exit
+    if [ "$PROBE" = 1 ]; then
+        SC_SETUP_WHAT="installing the client probe"
+        rig_use_probe "$SC_RUN/probe"
+    fi
+    # The server bridge reads its commands from here (rig-bridge.lua: RIG_BRIDGE_DIR).
+    mkdir -p "$SC_RUN/bridge"; export RIG_BRIDGE_DIR=$SC_RUN/bridge
     SC_SETUP_WHAT="loading the fixture"
     case $FIXTURE in
         -) rig_clear_state ;;
@@ -1128,10 +1524,16 @@ _sc_dry_run() {
     SC_DRY_CWD=$(mktemp -d); builtin cd "$SC_DRY_CWD" || return 1
     # Under set -u an unset variable ends this process inside steps.sh; say what that means.
     trap '[ "$SC_PHASE" = steps ] && echo "FAIL steps.sh aborted: an unset variable (steps.sh runs under set -u; see the bash message above)"; rm -rf "$SC_DRY_CWD" "$SC_DRY_OFF"' EXIT
+    # In a dry-run every verb returns 0, so a failing top-level command of steps.sh is a mistake: most
+    # often an unquoted '<' (assert probe a nearby dist<400 reads from a file named 400).
+    SC_DRY_STEPS=$SC_DIR/steps.sh
+    _sc_dry_err() { [ "${BASH_SOURCE[1]:-}" = "$SC_DRY_STEPS" ] && printf 'steps.sh:%s\tfailed\n' "$1" >> "$SC_DRY_OFF"; return 0; }
+    set -E; trap '_sc_dry_err "$LINENO"' ERR
     # shellcheck disable=SC2123  # emptying the search path is the point
     PATH=/nonexistent-rig-dry-run     # an empty PATH would search the current directory
     _sc_run_steps || rc=$?
     PATH=$savepath
+    trap - ERR; set +E
     unset -f command_not_found_handle eval exec source
     if [ -n "$(ls -A "$SC_DRY_CWD")" ]; then
         echo "FAIL steps.sh wrote $(ls -A "$SC_DRY_CWD" | sed "s/.*/'&'/" | tr '\n' ' ')in its working directory: an unquoted > or < (quote operators: assert count server 'x' '>=' 2)"
@@ -1139,7 +1541,12 @@ _sc_dry_run() {
     fi
     builtin cd "$savecwd" || true
     while IFS=$'\t' read -r line msg; do
-        echo "FAIL $line: '$msg' is not a verb (external commands, eval, exec and source are not allowed in steps.sh)"; bad=1
+        if [ "$msg" = failed ]; then
+            echo "FAIL $line: the command failed before any verb ran: an unquoted < or > (quote conditions: 'dist<400')?"
+        else
+            echo "FAIL $line: '$msg' is not a verb (external commands, eval, exec and source are not allowed in steps.sh)"
+        fi
+        bad=1
     done < "$SC_DRY_OFF"
     rm -f "$SC_DRY_OFF"
     for i in "${!SC_RSTAT[@]}"; do [ "${SC_RSTAT[i]}" = FAIL ] && bad=1; done
@@ -1362,8 +1769,7 @@ EOF
     _check "window: settle does not mark; an input verb marks before it acts" "$out" "PASS PASS FAIL"
     mark >/dev/null; : > "$SC_RUN/client-a.log"; echo 'after restart' >> "$SC_RUN/client-a.log"
     assert client a 'after restart' 0 >/dev/null;     _check "window: a rewritten (shorter) log is read from 0" "$SC_LAST_STATUS" PASS
-    console a 'journal x 10' >/dev/null;              _check "setup verbs stubbed" "$SC_LAST_STATUS" SKIP
-    assert probe a nearby actor=b >/dev/null;         _check "probe assertions stubbed" "$SC_LAST_STATUS" SKIP
+    assert probe a nearby actor=b >/dev/null;         _check "probe: PROBE=0 -> SKIP" "$SC_LAST_STATUS" SKIP
 
     # -- 4. exit-code aggregation and RESULT format --
     _check "aggregate: all skipped -> 4"      "$(_sc_aggregate 4 4)" 4

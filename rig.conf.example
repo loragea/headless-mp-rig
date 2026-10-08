@@ -103,6 +103,19 @@ RIG_WIGGLE_INTERVAL=20   # idle-wiggler period; MUST stay < the engine's 30s fVa
 # The client's chat-window toggle key (scenario verb `hidechat`); F2 in some builds.
 # RIG_CHAT_KEY=F6
 
+# --- Server bridge and client probe (docs/SCENARIO-FORMAT.md §7-8) ---------------------------------
+# Secs for the server bridge to answer a setup command (console, server, save, probe); no answer
+# stops the scenario as INFRA.
+# RIG_BRIDGE_CAP=5
+# Secs for the client probe to answer a `probe` request once the bridge sent it (a slow client right
+# after login on software GL needs several seconds).
+# RIG_PROBE_CAP=10
+# The probe's heartbeat period (real seconds) and its `nearby` radius (game units).
+# RIG_PROBE_PERIOD=5
+# RIG_PROBE_RANGE=2048
+# Probe caps to report as missing (comma list, e.g. weather): tests the SKIP path of `assert probe`.
+# RIG_PROBE_CAPS_OFF=
+
 # --- Reference binding (normally set per scenario by the test, not here) -------------------------
 # Older consumers export these before sourcing lib/compare.sh / lib/logcheck.sh; new tests call
 # compare_set_refs / logcheck_set_refs instead. Review dirs default to <run dir>/review.
