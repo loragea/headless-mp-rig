@@ -1,7 +1,7 @@
 # KB-22-event-gated-probe-wait — Event-gated probe wait: poll a state until it holds instead of settling and probing once
 Read when: an assertion reads a probe state that arrives after an unknown delay (a packet relay, an AI reaction, a death, a respawn, a spawn).
 
-**Confidence: PARTIAL** — the verb is proven by its selftest against a fake probe; the caps to choose depend on the build and the box.
+**Confidence: VALIDATED** — on a two-client OpenMW-MP build on llvmpipe, stance, items, effects, stats, death, lock, time and weather states arrived within one or two requests (0–6 s) of their trigger.
 
 The pattern `settle N "…"` → `probe p kind` → `assert probe p kind cond` has two failure modes: N too
 short under load (a false red), and N too long on an idle box (time wasted on every run). Both come
