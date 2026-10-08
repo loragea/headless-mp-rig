@@ -13,6 +13,8 @@ lib/compare.sh selftest
 lib/logcheck.sh selftest
 lib/scenario.sh selftest
 bin/rig run --dry-run scenarios/example
+bin/rig lint scenarios/example
+bin/rig new /tmp/t1 --players "a b" --content example && bin/rig lint /tmp/t1
 ```
 
 CI (`.github/workflows/ci.yml`) runs exactly these commands. A change to the rig's runtime

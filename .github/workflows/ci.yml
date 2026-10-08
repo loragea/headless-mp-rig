@@ -29,3 +29,7 @@ jobs:
         run: lib/scenario.sh selftest
       - name: Dry-run the example scenario
         run: bin/rig run --dry-run scenarios/example
+      - name: Lint the example scenario
+        run: bin/rig lint scenarios/example
+      - name: Scaffold a scenario from the template and lint it
+        run: t=$(mktemp -d) && bin/rig new "$t/t1" --players "a b" --content example && bin/rig lint "$t/t1"
