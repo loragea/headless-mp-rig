@@ -399,13 +399,15 @@ _cli_explain_attempt() {
     local r=$1 src=$2 label=$3 step line desc st off det n=0 u=0
     [ -f "$r/steps.tsv" ] || { echo " $label: no steps.tsv (see $r/run.log)"; _cli_tail "$r/run.log"; return 0; }
     echo " $label: $(cat "$r/RESULT" 2>/dev/null || echo 'no RESULT')  ($r)"
-    while IFS=$'\t' read -r step line desc st _ off det; do
+    # Tab is IFS whitespace, so "read" would merge an empty column (offsets) into the next: split
+    # on a non-whitespace separator instead.
+    while IFS=$'\x1f' read -r step line desc st _ off det; do
         case $step in '#'*|'') continue ;; esac
         case $st in
             FAIL|REGRESSION|NO-REFERENCE) _cli_explain_row "$r" "$src" "$line" "$desc" "$st" "$off" "$det"; n=$((n+1)) ;;
             UNBLESSED) u=$((u+1)) ;;
         esac
-    done < "$r/steps.tsv"
+    done < <(tr '\t' '\037' < "$r/steps.tsv")
     [ "$n" -gt 0 ] || echo "   no failing step"
     [ "$u" -gt 0 ] && echo "   $u unblessed reference(s): grep UNBLESSED $r/steps.tsv (candidates in shots/ and review/)"
     return 0
