@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cli.sh — the authoring and diagnosis subcommands of bin/rig: list, new, lint, explain, rerun-failed,
-# up, down, and the per-subcommand help. bin/rig sources this after lib/rig.sh and lib/scenario.sh;
+# up, down, cmd, and the per-subcommand help. bin/rig sources this after lib/rig.sh and lib/scenario.sh;
 # each rig_cli_<cmd> returns the subcommand's exit code (64 = usage error). Not meant to be run.
 #
 # Everything here reads what the runner writes (docs/SCENARIO-FORMAT.md §4-§5): scenario.conf without
@@ -24,6 +24,7 @@ usage: bin/rig <command> [args]     (bin/rig help <command> for one command)
   rerun-failed [run|latest]  run again the scenarios that failed in a run
   up <dir> [player...]     boot a scenario's server and clients, log the players in, leave them running
   down                     stop everything `up` or a killed run left running
+  cmd <verb> <player> ...  send one server-bridge command to the world `up` left running, print the answer
 
 Exit codes: 0 ok, 1 fail, 2 regression, 3 infrastructure, 4 content missing, 64 usage error.
 Config: rig.conf next to bin/ (or $RIG_CONF); an environment variable wins over the file.
@@ -101,6 +102,21 @@ usage: bin/rig down
   and their idle wigglers: `bin/rig run`/`up` processes, the runner's scenario processes, the server
   (RIG_SERVER_BIN), clients (RIG_CLIENT_BIN), Xvfb, xdotool; then clear the display locks of
   RIG_DISPLAY*. Run directories are kept. Exit 0 when nothing is left running, 1 otherwise.
+EOF
+            ;;
+        cmd) cat <<'EOF'
+usage: bin/rig cmd [--run <dir>] <verb> <player> [args...]
+  Send one command to the server bridge of the world `bin/rig up` left running (or of the scenario
+  run dir given with --run, whose server must still run) and print the bridge's answer. The verbs are
+  the bridge's (docs/SCENARIO-FORMAT.md §8):
+    console <p> "<mwscript>"                           the server pushes a console command to p
+    object <p> "<cell>" <refnum>-<mpnum> "<mwscript>"  ... run on one object of a cell
+    lua <p> "<lua>"                                    run Lua in the server (pid, player bound)
+    save <p>                                           write p's player record
+    savecell "<cell>"                                  write a loaded cell's record
+    probe <p> <kind|dump>                              ask p's client probe; prints its lines
+  Commands go through the server, so no client is kicked for an unrequested console command.
+  Exit 0 done, 1 refused (the reason is printed), 3 no answer within RIG_BRIDGE_CAP / RIG_PROBE_CAP.
 EOF
             ;;
         *) echo "rig help: unknown command '$1'" >&2; rig_cli_help >&2; return 64 ;;
@@ -575,6 +591,8 @@ attach (each player has its own display; no window manager, so no focus is neede
   watch:    x11vnc -display $disp -localhost -once    (then a VNC viewer on localhost:5900), if installed
   logs:     tail -f $out/server.log $out/client-${want[0]}.log
   The idle wiggler keeps nudging the pointer every ${RIG_WIGGLE_INTERVAL}s (WIGGLE=0 in scenario.conf turns it off).
+server-pushed commands (no console kick):
+            bin/rig cmd console ${want[0]} "ModCurrentFatigue -10"      bin/rig cmd probe ${want[0]} nearby
 stop:       bin/rig down
 EOF
     return 0
@@ -610,4 +628,67 @@ _cli_live_list() {
     local p
     { pgrep -a -x "$RIG_SERVER_BIN"; pgrep -a -x "$RIG_CLIENT_BIN"; pgrep -a -x Xvfb; pgrep -a -x xdotool; } 2>/dev/null
     for p in $(_cli_rig_pids _run-one); do echo "$p $(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)"; done
+}
+
+# ================================================================================================
+# cmd — one server-bridge command to a running world
+# ================================================================================================
+# _cli_probe_lines <client log> <seq> — the [rigprobe:*] lines of one request.
+_cli_probe_lines() { grep -a -o '\[rigprobe:[A-Za-z0-9_-]*\].*' "$1" 2>/dev/null | grep -E " seq=$2( |\$)"; }
+_cli_probe_done() { _cli_probe_lines "$1" "$2" | grep -q '^\[rigprobe:done\]'; }
+rig_cli_cmd() {
+    local run='' verb who rc=0 seq f n
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -h|--help) rig_cli_help cmd; return 0 ;;
+            --run) [ -n "${2:-}" ] || { _cli_usage_err cmd "--run needs a scenario run dir"; return 64; }; run=$2; shift 2 ;;
+            *) break ;;
+        esac
+    done
+    verb=${1:-}; who=${2:-}
+    [ -n "$verb" ] && [ -n "$who" ] || { _cli_usage_err cmd "expected <verb> <player> [args...]"; return 64; }
+    for f in "${@:2}"; do _sc_ac_line "$f" "cmd $verb" >&2 || return 64; done
+    case $verb in
+        console|lua) [ $# = 3 ] || { _cli_usage_err cmd "$verb <p> \"<text>\""; return 64; } ;;
+        object)   [ $# = 5 ] && [[ $4 =~ ^[0-9]+-[0-9]+$ ]] || { _cli_usage_err cmd 'object <p> "<cell>" <refnum>-<mpnum> "<mwscript>"'; return 64; } ;;
+        save|savecell) [ $# = 2 ] || { _cli_usage_err cmd "$verb takes one argument"; return 64; } ;;
+        probe)    [ $# = 3 ] && [[ $3 =~ ^[A-Za-z0-9_]+$ ]] || { _cli_usage_err cmd 'probe <p> <kind|dump>'; return 64; } ;;
+        *)        _cli_usage_err cmd "unknown verb '$verb' (console object lua save savecell probe)"; return 64 ;;
+    esac
+    if [ -z "$run" ]; then
+        [ -f "$RIG_RUNS/.rig-up" ] || { echo "rig cmd: no world is up (bin/rig up <dir> first, or --run <dir>)" >&2; return 3; }
+        run=$(cat "$RIG_RUNS/.rig-up")
+    fi
+    [ -d "$run/bridge" ] || { echo "rig cmd: no bridge/ in $run" >&2; return 3; }
+    pgrep -x "$RIG_SERVER_BIN" >/dev/null 2>&1 || { echo "rig cmd: no $RIG_SERVER_BIN is running" >&2; return 3; }
+    # Continue the run's seq: the bridge executes cmd-<seq>.meta in order from 1.
+    n=0
+    for f in "$run"/bridge/cmd-*.meta; do
+        [ -e "$f" ] || continue
+        f=${f##*/cmd-}; f=${f%.meta}
+        [[ $f =~ ^[0-9]+$ ]] && [ "$f" -gt "$n" ] && n=$f
+    done
+    # shellcheck disable=SC2034  # SC_RUN is read by _sc_bridge_send
+    SC_RUN=$run SC_BRIDGE_SEQ=$n
+    case $verb in
+        console)  _sc_bridge_send console "$who" "$3" || rc=$? ;;
+        object)   _sc_bridge_send object "$who" "$3" "$4" "$5" || rc=$? ;;
+        lua)      _sc_bridge_send lua "$who" --body "$3" || rc=$? ;;
+        save)     _sc_bridge_send save "$who" || rc=$? ;;
+        savecell) _sc_bridge_send savecell - "$who" || rc=$? ;;
+        probe)    _sc_bridge_send probe "$who" "$3" || rc=$? ;;
+    esac
+    seq=$SC_BRIDGE_SEQ
+    case $rc in
+        0) echo "bridge $seq: $SC_BRIDGE_REPLY" ;;
+        1) echo "bridge $seq refused: $SC_BRIDGE_REPLY"; return 1 ;;
+        *) echo "bridge $seq: no answer within RIG_BRIDGE_CAP=${RIG_BRIDGE_CAP}s (grep rig-bridge $run/server.log)"; return 3 ;;
+    esac
+    [ "$verb" = probe ] || return 0
+    f=$run/client-$who.log
+    if ! _sc_poll "$RIG_PROBE_CAP" _cli_probe_done "$f" "$seq"; then
+        echo "probe: client $who did not answer seq $seq within RIG_PROBE_CAP=${RIG_PROBE_CAP}s (see $f)"; return 3
+    fi
+    _cli_probe_lines "$f" "$seq"
+    return 0
 }

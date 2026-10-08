@@ -83,6 +83,8 @@ bin/rig rerun-failed latest   # run what failed again
 bin/rig up scenarios/example  # boots the server and both clients, logs them in, stays up, prints
                               # each display, pid and log
 DISPLAY=:99 xdotool key Return; DISPLAY=:99 import -window root shot.png
+bin/rig cmd console a "ModCurrentFatigue -10"   # a console command the server pushes (no kick)
+bin/rig cmd probe a nearby    # what a's engine holds (scenarios with PROBE=1)
 bin/rig down                  # stops everything up (or a killed run) left running
 ```
 
@@ -92,7 +94,7 @@ bin/rig down                  # stops everything up (or a killed run) left runni
 
 ```
 rig.conf.example     copy to rig.conf; every key, commented: build, scripts, content profiles, runs, displays
-bin/rig              the command line: doctor, list, new, lint, run, explain, rerun-failed, up, down
+bin/rig              the command line: doctor, list, new, lint, run, explain, rerun-failed, up, down, cmd
 bin/run-example.sh   shorthand for `bin/rig run scenarios/example`
 lib/rig.sh           the rig: run dirs, CoreScripts work copy, boot server+clients, load fixtures, drive
                      input, event-gated waits, capture

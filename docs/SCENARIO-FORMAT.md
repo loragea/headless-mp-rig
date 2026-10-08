@@ -220,7 +220,8 @@ bin/rig run <dir>... | --tag T | --all  [--out DIR] [--capture] [--strict-refs] 
 
 The other commands (`bin/rig help <command>` for each): `list`, `new`, `lint`, `explain` (the
 failing steps of every attempt of a run with the file, byte window and line range to open),
-`rerun-failed`, `up` (a scenario's world left running for exploration) and `down`.
+`rerun-failed`, `up` (a scenario's world left running for exploration), `down`, and `cmd` (one
+server-bridge command to the world `up` left running: `bin/rig cmd probe a nearby`).
 
 ### 4.1 Exit codes and verdict
 
