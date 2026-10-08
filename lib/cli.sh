@@ -461,9 +461,28 @@ rig_cli_rerun_failed() {
 # ================================================================================================
 # up / down
 # ================================================================================================
-_cli_live() {   # print what rig processes are running; return 1 if none
+# _cli_rig_pids <run|up|_run-one>... — pids of the rig's own bash processes by their argv: `bash
+# .../bin/rig run|up ...` or `bash .../lib/scenario.sh _run-one ...` (an idle wiggler is a fork of the
+# latter). argv is matched exactly, never as a substring: `pgrep -f` would also match any shell whose
+# command line merely mentions these words, including the one that called bin/rig down.
+_cli_rig_pids() {
+    local d pid a0 a1 a2 want
+    for d in /proc/[0-9]*; do
+        pid=${d#/proc/}
+        [ "$pid" = "$$" ] && continue
+        { IFS= read -r -d '' a0 && IFS= read -r -d '' a1 && IFS= read -r -d '' a2; } < "$d/cmdline" 2>/dev/null || continue
+        [ "${a0##*/}" = bash ] || continue
+        for want in "$@"; do
+            case $want in
+                _run-one) [ "${a1##*/}" = scenario.sh ] && [ "$a2" = _run-one ] && { echo "$pid"; break; } ;;
+                *)        [ "${a1##*/}" = rig ] && [ "$a2" = "$want" ] && { echo "$pid"; break; } ;;
+            esac
+        done
+    done
+}
+_cli_live() {   # return 0 if any rig process is running
     local out=''
-    out=$(pgrep -x "$RIG_SERVER_BIN"; pgrep -x "$RIG_CLIENT_BIN"; pgrep -x Xvfb; pgrep -f 'scenario\.sh _run-one'; pgrep -x xdotool) 2>/dev/null
+    out=$(pgrep -x "$RIG_SERVER_BIN"; pgrep -x "$RIG_CLIENT_BIN"; pgrep -x Xvfb; pgrep -x xdotool; _cli_rig_pids _run-one) 2>/dev/null
     [ -n "$out" ]
 }
 rig_cli_up() {
@@ -545,7 +564,7 @@ rig_cli_down() {
     [ -f "$RIG_RUNS/.rig-up" ] && up=$(cat "$RIG_RUNS/.rig-up")
     # Parents first (so none starts the next scenario), then the runner children (each kept-up or
     # orphaned idle wiggler is a fork of one), then the game processes and displays.
-    pids=$( { pgrep -f '/rig (run|up)( |$)'; pgrep -f 'scenario\.sh _run-one'; } 2>/dev/null | grep -vx "$$" )
+    pids=$(_cli_rig_pids run up rerun-failed _run-one)
     if [ -n "$pids" ]; then n=$((n + $(wc -w <<<"$pids"))); kill $pids 2>/dev/null; fi
     for a in "$RIG_CLIENT_BIN" "$RIG_SERVER_BIN" Xvfb xdotool; do
         pids=$(pgrep -x "$a" 2>/dev/null) || continue
@@ -555,7 +574,7 @@ rig_cli_down() {
     while _cli_live && [ "$w" -lt 15 ]; do sleep 1; w=$((w+1)); done
     if _cli_live; then        # a straggler that ignored SIGTERM
         pkill -9 -x "$RIG_SERVER_BIN" 2>/dev/null; pkill -9 -x Xvfb 2>/dev/null; pkill -9 -x xdotool 2>/dev/null
-        pkill -9 -f 'scenario\.sh _run-one' 2>/dev/null; sleep 1
+        pids=$(_cli_rig_pids _run-one); [ -z "$pids" ] || kill -9 $pids 2>/dev/null; sleep 1
     fi
     for d in "$RIG_DISPLAY" "$RIG_DISPLAY2" "$RIG_DISPLAY3"; do rm -f "/tmp/.X${d#:}-lock" 2>/dev/null; done
     rm -f "$RIG_RUNS/.rig-up"
@@ -565,4 +584,8 @@ rig_cli_down() {
     echo "rig down: stopped $n process(es)${up:+ (the world of bin/rig up in $up)}; nothing rig-owned is running"
     return 0
 }
-_cli_live_list() { pgrep -a -x "$RIG_SERVER_BIN"; pgrep -a -x "$RIG_CLIENT_BIN"; pgrep -a -x Xvfb; pgrep -af 'scenario\.sh _run-one'; pgrep -a -x xdotool; } 2>/dev/null
+_cli_live_list() {
+    local p
+    { pgrep -a -x "$RIG_SERVER_BIN"; pgrep -a -x "$RIG_CLIENT_BIN"; pgrep -a -x Xvfb; pgrep -a -x xdotool; } 2>/dev/null
+    for p in $(_cli_rig_pids _run-one); do echo "$p $(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)"; done
+}
