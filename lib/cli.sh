@@ -470,7 +470,7 @@ _cli_rig_pids() {
     for d in /proc/[0-9]*; do
         pid=${d#/proc/}
         [ "$pid" = "$$" ] && continue
-        { IFS= read -r -d '' a0 && IFS= read -r -d '' a1 && IFS= read -r -d '' a2; } < "$d/cmdline" 2>/dev/null || continue
+        { IFS= read -r -d '' a0 && IFS= read -r -d '' a1 && IFS= read -r -d '' a2; } 2>/dev/null < "$d/cmdline" || continue
         [ "${a0##*/}" = bash ] || continue
         for want in "$@"; do
             case $want in
