@@ -72,7 +72,10 @@ end
 local function emit(kind, seq, fields)
     local parts = { '[rigprobe:' .. kind .. ']', 'p=' .. fmt(playerName()),
                     't=' .. fmt(get(core.getSimulationTime) or 0), 'seq=' .. tostring(seq) }
-    for i = 1, #fields, 2 do
+    -- A nil value leaves a hole in `fields`, so # is not its length: find the last index instead.
+    local last = 0
+    for k in pairs(fields) do if type(k) == 'number' and k > last then last = k end end
+    for i = 1, last, 2 do
         local v = fields[i + 1]
         if v ~= nil then parts[#parts + 1] = fields[i] .. '=' .. fmt(v) end
     end
