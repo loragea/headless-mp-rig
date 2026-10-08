@@ -2,7 +2,7 @@
 #   cp rig.conf.example rig.conf   &&   $EDITOR rig.conf   &&   bin/rig doctor
 # Every key is listed here; commented-out keys show their default. The file is sourced by bash, so quote
 # values with spaces. A variable already set in the environment when the rig is sourced wins over the
-# same key here (e.g. `RIG_BUILD=/other/build bin/run-example.sh`).
+# same key here (e.g. `RIG_BUILD=/other/build bin/rig run scenarios/example`).
 # lib/rig.sh sources ../rig.conf automatically; point elsewhere with RIG_CONF=/path/to/rig.conf.
 # `bin/rig doctor` checks every key below and names the key in each problem it reports.
 
@@ -36,7 +36,7 @@ RIG_CORESCRIPTS=$HOME/CoreScripts
 #   RIG_CONTENT_<name>_FILES     content files under DATA, in load order (required)
 # See docs/WRITING-SCENARIOS.md §4.
 # Free OpenMW example-suite (git clone --depth 1 https://gitlab.com/OpenMW/example-suite); the worked
-# example (bin/run-example.sh) needs this profile.
+# example (bin/rig run scenarios/example) needs this profile.
 RIG_CONTENT_example_DATA=$HOME/example-suite/game_template/data
 RIG_CONTENT_example_FILES="template.omwgame"
 # Morrowind with both expansions, if you own it (commercial data — keep tests built on it out of a
@@ -57,6 +57,10 @@ RIG_CONTENT_example_FILES="template.omwgame"
 # RIG_RUNS=$HOME/headless-mp-rig/runs
 # 1 = keep the CoreScripts work copy in the run dir after the run (post-mortem); default removes it.
 # RIG_KEEP_WORK=0
+# Where `bin/rig run --tag T` / `--all` look for scenario dirs when none is named (space-separated).
+# RIG_SCENARIOS=$HOME/headless-mp-rig/scenarios
+# A label for your build, recorded in each run's env.txt. Default: sha256 prefix of the client binary.
+# RIG_BUILD_ID=
 
 # --- Headless environment ---------------------------------------------------------------------
 # One Xvfb display per client (see docs/WRITING-SCENARIOS.md "one display per client"). The window
@@ -90,6 +94,11 @@ RIG_WIGGLE_INTERVAL=20   # idle-wiggler period; MUST stay < the engine's 30s fVa
 # RIG_BOOT_SETTLE=6      # settle after the boot milestone (milestone -> name box drawn)
 # RIG_CHARGEN_PWBOX=4    # secs for the "create password" box after the name
 # RIG_CHARGEN_DLG=5      # secs for each chargen dialog to render
+# RIG_LOGIN_CAP=30       # scenario `login`: secs to see the server log the player in (fresh: x3)
+
+# --- Scenario input -------------------------------------------------------------------------------
+# The client's chat-window toggle key (scenario verb `hidechat`); F2 in some builds.
+# RIG_CHAT_KEY=F6
 
 # --- Reference binding (normally set per scenario by the test, not here) -------------------------
 # Older consumers export these before sourcing lib/compare.sh / lib/logcheck.sh; new tests call

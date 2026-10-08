@@ -65,7 +65,7 @@ read the whole log. Matching is `grep -E`, case-sensitive.
 
 | Verb | Effect |
 |---|---|
-| `boot <p>…` | start the server (first call), one display and client per player; wait for each client's connection (cap `RIG_BOOT_CAP`), then the boot milestone (cap `RIG_WORLD_LOAD`) |
+| `boot <p>…` | start the server (first call), one display and client per player; wait for each client's connection (cap `RIG_BOOT_CAP`), then its boot milestone: `Sending ID_PLAYER_MAP` in the client log, or a rendered, settled frame on its display (cap `RIG_WORLD_LOAD`), then `RIG_BOOT_SETTLE` |
 | `login <p> [returning\|fresh]` | type the name and password (`fresh` drives character generation); wait for the server's `[rig-bridge] player <p> in` (cap `RIG_LOGIN_CAP`) |
 | `logout <p>` | stop the client; wait for `[rig-bridge] player <p> out` |
 | `wiggle` | (re)start the idle wiggler on every booted display; `run` starts it after the first login unless `WIGGLE=0` |
@@ -133,7 +133,7 @@ the work copy's `data/`, into `artifacts/`).
 ### 3.8 Custom verbs
 
 A function `verb_<name>` in `hooks.sh` is callable as `<name> <args>` (it must not shadow a built-in
-verb). Return 0 records `OK`, non-zero records `FAIL`. Hooks see `RIG_RUN_DIR` (this attempt's
+verb). Return 0 records `OK`, non-zero records `FAIL`; the call marks like an input verb. Hooks see `RIG_RUN_DIR` (this attempt's
 scenario dir), `RIG_SET_DIR` (the run-set dir) and `SC_DIR` (the scenario source dir).
 
 ## 4. `bin/rig run`
