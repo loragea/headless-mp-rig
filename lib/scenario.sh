@@ -327,6 +327,17 @@ _sc_ac_cap() { [ -z "${1:-}" ] || _sc_ac_n "$1" "$2 cap"; }
 _sc_ac_max() { [ "$2" -le "$3" ] || { echo "$1: $2 arguments, at most $3 — quote an argument holding spaces, and quote operators ('>=')"; return 1; }; }
 # _sc_ac_line <text> <verb> — a command that travels as one line of the bridge's command file.
 _sc_ac_line() { [[ $1 != *[$'\t\n\r']* ]] || { echo "$2: the command holds a tab or newline (one command per call; console-file for several)"; return 1; }; }
+# _sc_ac_console_file <path> <name> — every command line of a console file travels as one bridge
+# line: a tab in it would end the command there.
+_sc_ac_console_file() {
+    local line n=0
+    while IFS= read -r line || [ -n "$line" ]; do
+        n=$((n + 1)); line=${line%$'\r'}
+        [[ $line =~ ^[[:space:]]*(#.*)?$ ]] && continue
+        [[ $line != *$'\t'* ]] || { echo "console-file $2:$n: the command holds a tab (the bridge would run only the text before it)"; return 1; }
+    done < "$1"
+    return 0
+}
 # _sc_ac_kind <kind> <verb> [extra] — a probe kind the probe answers.
 _sc_ac_kind() {
     case " $SC_PROBE_KINDS ${3:-} " in *" ${1:-} "*) [ -n "${1:-}" ] && return 0;; esac
@@ -398,7 +409,8 @@ _sc_argcheck() {
                 _sc_ac_max "$v" $# 2 ;;
         console-file) _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "console-file: no file"; return 1; }
                 [ -f "$SC_DIR/$2" ] || { echo "console-file: no file $2 in the scenario dir"; return 1; }
-                _sc_ac_max console-file $# 2 ;;
+                _sc_ac_max console-file $# 2 || return 1
+                _sc_ac_console_file "$SC_DIR/$2" "$2" ;;
         console-object) _sc_ac_p "${1:-}" || return 1
                 [ $# = 4 ] || { echo "console-object: expected <p> \"<cell>\" <refnum-mpnum> \"<cmd>\""; return 1; }
                 [[ $3 =~ ^[0-9]+-[0-9]+$ ]] || { echo "console-object: '$3' is not <refnum>-<mpnum> (e.g. 0-12)"; return 1; }
@@ -795,13 +807,14 @@ _scv_save() {
 # console-file <p> <file> — every line that is not blank or a # comment, in order, one bridge command each.
 _scv_console_file() {
     _sc_begin console-file "$@" || return 0
-    local p=${1:-} file=$SC_DIR/${2:-} line n=0 sent=0 first='' rc
+    local p=${1:-} file=$SC_DIR/${2:-} line n=0 sent=0 first='' rc msg
     _sc_setup_ready "$p" || return 1
     [ -f "$file" ] || { _sc_row FAIL "" "console-file: no file ${2:-} in the scenario dir"; return 1; }
     _sc_mark_all
     while IFS= read -r line || [ -n "$line" ]; do
         n=$((n + 1)); line=${line%$'\r'}
         [[ $line =~ ^[[:space:]]*(#.*)?$ ]] && continue
+        if ! msg=$(_sc_ac_line "$line" "console-file ${2}:$n"); then _sc_close_row FAIL "$msg${first:+ (lines before it were sent: bridge $first-$SC_BRIDGE_SEQ)}"; return 1; fi
         rc=0; _sc_bridge_send console "$p" "$line" || rc=$?
         first=${first:-$SC_BRIDGE_SEQ}
         case $rc in
@@ -1876,13 +1889,14 @@ EOF
     printf 'boot a\nlogin a\nassert server ok\n' > "$t/s4/steps.sh"
     if bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" >/dev/null 2>&1; then _ok "dry-run: clean steps pass"; else _bad "dry-run: clean steps pass"; fi
     local case want
+    mkdir -p "$t/s4/setup"; printf '# ok\nset x to 1\nset y to 2\t; trailing\n' > "$t/s4/setup/tab.console"
     for case in "assert count server x >= 2|wrote '='" "shot a s1 12x12|is not WxH+X+Y" "settle 3|give the reason" \
                 "assert server ok --since m9|no earlier 'mark m9'" "wait --since m client zz foo|unknown player 'zz'" \
                 "assert server|no ERE" "assert json player/a.json d[0] == 1|at most 3" "scroll a 1 until server x|scroll: expected" \
                 "echo \$P_TYPO|unset variable" "probe a bogus|not a probe kind" "assert probe a nearby|expected <p> <kind>" \
                 "assert probe a nearby dist<400|unquoted < or >" "assert probe-delta a stats fat x 1|operator 'x'" \
                 "assert probe-delta a stats fat '<' 0 7|two request seqs" "console-object a cell 12 disable|not <refnum>-<mpnum>" \
-                "wait probe a|no ERE"; do
+                "wait probe a|no ERE" "console-file a setup/tab.console|tab.console:3: the command holds a tab"; do
         want=${case#*|}
         printf 'boot a\n%s\n' "${case%%|*}" > "$t/s4/steps.sh"
         out=$(cd "$t" && bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" 2>&1); rc=$?
@@ -1977,6 +1991,10 @@ scenario_selftest_probe() {
     printf '# setup\n\nset x to 1\nset y to 2\n' > "$SC_DIR/setup/two.console"
     console-file a setup/two.console >/dev/null
     _check "bridge: console-file sends each command line" "$SC_LAST_STATUS|${SC_RDET[SC_STEP]}" "OK|2 command(s) from setup/two.console (bridge 4-5)"
+    printf 'set x to 1\t; a comment after a tab\n' > "$SC_DIR/setup/tab.console"
+    console-file a setup/tab.console >/dev/null
+    case $SC_LAST_STATUS/${SC_RDET[SC_STEP]} in "FAIL/console-file setup/tab.console:1: the command holds a tab"*) _ok "bridge: console-file with a tab in a command -> FAIL, nothing sent";;
+        *) _bad "bridge: console-file with a tab in a command -> FAIL, nothing sent" "$SC_LAST_STATUS ${SC_RDET[SC_STEP]}";; esac
     save a >/dev/null; save cell "0, -7" >/dev/null
     _check "bridge: save cell has no player" "$(cat "$dir/cmd-7.meta")" $'savecell\t-\t0, -7'
 

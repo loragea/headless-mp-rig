@@ -146,7 +146,7 @@ runs a console command the server did not queue is kicked by stock CoreScripts
 | Verb | Effect |
 |---|---|
 | `console <p> "<mwscript>"` | the server runs `logicHandler.RunConsoleCommandOnPlayer(pid, cmd, false)`: p's client executes the command with p as the console's selected object. `OK` means the server sent it; assert its effect afterwards (`probe`, a client or server line). One line; no tabs |
-| `console-file <p> setup/<f>.console` | every line of the file that is not blank or a `#` comment, in order, as one `console` each; one row. A refused line fails the row naming `<f>:<line>` |
+| `console-file <p> setup/<f>.console` | every line of the file that is not blank or a `#` comment, in order, as one `console` each; one row. A refused line fails the row naming `<f>:<line>`; so does a command holding a tab (the bridge splits its command file on tabs), which `bin/rig lint` reports before a run |
 | `console-object <p> "<cell>" <refnum>-<mpnum> "<mwscript>"` | `logicHandler.RunConsoleCommandOnObjects` on that object of the cell, run by p's client |
 | `server <p> "<lua>"` | runs the Lua chunk inside the server, with `pid` (p's) and `player` (`Players[pid]`) bound; other names resolve to the server's globals, and new globals the chunk assigns stay in its own environment. A returned value is in the row's detail (`returned …`); an error fails the row |
 | `save <p>` | `Players[pid]:SaveToDrive()`: `player/<p>.json` is current for `assert json` |

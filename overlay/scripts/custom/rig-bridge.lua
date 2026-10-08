@@ -99,6 +99,7 @@ local handlers = {}
 
 handlers.console = function(seq, pid, f)
     if f[3] == nil or f[3] == "" then return false, "no console command" end
+    if f[4] ~= nil then return false, "the command holds a tab (it would run only up to the tab)" end
     logicHandler.RunConsoleCommandOnPlayer(pid, f[3], false)
     return true, "sent to pid " .. pid
 end
@@ -108,6 +109,7 @@ handlers.object = function(seq, pid, f)
     if cell == nil or cell == "" or index == nil or not index:match("^%d+%-%d+$") or cmd == nil or cmd == "" then
         return false, "expected <cell> <refnum-mpnum> <command>"
     end
+    if f[6] ~= nil then return false, "the command holds a tab (it would run only up to the tab)" end
     logicHandler.RunConsoleCommandOnObjects(pid, cmd, cell, { index }, false)
     return true, "sent to pid " .. pid .. " for " .. index .. " in " .. cell
 end
