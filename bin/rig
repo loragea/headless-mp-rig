@@ -4,6 +4,10 @@
 # Usage:
 #   bin/rig doctor     validate rig.conf and the host; every problem names the rig.conf key (or the
 #                      package) to fix. Exit 0 = a run can start, 1 = something must be fixed.
+#   bin/rig run <dir>... | --tag T | --all  [--out DIR] [--capture] [--strict-refs]
+#                      [--retry-failed N] [--dry-run] [--keep-up] [--keep-work]
+#                      run scenarios (docs/SCENARIO-FORMAT.md). Exit 0 pass, 1 fail, 2 regression,
+#                      3 infrastructure, 4 content missing (every scenario skipped).
 #   bin/rig help       this text
 #
 # Config: lib/rig.sh loads ../rig.conf (or $RIG_CONF); a variable set in the environment wins over the
@@ -13,10 +17,14 @@ DIR=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 # shellcheck source=../lib/rig.sh
 source "$DIR/../lib/rig.sh"
 
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
 
 case "${1:-help}" in
     doctor)         shift; rig_doctor "$@"; exit $? ;;
+    run)            shift
+                    # shellcheck source=../lib/scenario.sh
+                    source "$DIR/../lib/scenario.sh"
+                    scenario_run "$@"; exit $? ;;
     help|-h|--help) usage; exit 0 ;;
     *)              echo "rig: unknown command '$1'" >&2; usage >&2; exit 2 ;;
 esac
