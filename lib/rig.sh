@@ -581,7 +581,14 @@ rig_start_idle_wiggler() {
     # show within seconds of login — the first wiggle must not wait a full period.
     # It exits on its own once none of its Xvfb servers is alive, so a wiggler orphaned by a killed run or
     # a kept-up world never injects motion into the next run's displays.
-    ( dir=1
+    # The subshell inherits every fd open in its caller, including bash's saved copy of a redirected
+    # one (`f 3>&-` keeps the old fd 3 as fd 10+): close all but 0-2, or a kept-up wiggler holds the
+    # pipe of `bin/rig up | tail` open and the pipeline never ends.
+    ( for fd in /proc/"$BASHPID"/fd/*; do
+          fd=${fd##*/}
+          [[ $fd =~ ^[0-9]+$ ]] && [ "$fd" -gt 2 ] && eval "exec $fd>&-" 2>/dev/null
+      done
+      dir=1
       while true; do
           alive=0; for x in "${xpids[@]}"; do kill -0 "$x" 2>/dev/null && alive=1; done
           [ "$alive" = 1 ] || break
