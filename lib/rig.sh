@@ -311,7 +311,7 @@ rig_load_scenario() {
     [ -d "$fix" ] || rig_die "no scenario fixture at $fix"
     for sub in $RIG_STATE_SUBDIRS; do
         rm -rf "${d:?}/$sub"
-        [ -d "$fix/$sub" ] && cp -a "$fix/$sub" "$d/$sub"
+        if [ -d "$fix/$sub" ]; then cp -a "$fix/$sub" "$d/$sub"; else mkdir -p "$d/$sub"; fi   # the server expects all six
     done
 }
 

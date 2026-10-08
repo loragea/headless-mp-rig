@@ -164,7 +164,7 @@ SC_DIR='' SC_RUN='' SC_NAME='' SC_DRY=0 SC_INFRA='' SC_STEP=0 SC_T0=$SECONDS SC_
 SC_CUR_STEP=0 SC_CUR_LINE='' SC_CUR_DESC='' SC_LAST_STATUS='' SC_FIRST_LOGIN=1
 SC_CAPTURE=${SC_CAPTURE:-0} SC_STRICT=${SC_STRICT:-0} SC_KEEP_UP=${SC_KEEP_UP:-0} SC_ATTEMPT=${SC_ATTEMPT:-1}
 SC_PLAYERS=()
-declare -A SC_SLOT=() SC_PASS=() SC_OFF=() SC_NAMED=() SC_BOOTED=() SC_IN=() SC_SHOTROW=() SC_PAIRIN=()
+declare -A SC_BOOT_HOW=() SC_SLOT=() SC_PASS=() SC_OFF=() SC_NAMED=() SC_BOOTED=() SC_IN=() SC_SHOTROW=() SC_PAIRIN=()
 # Rows, indexed by step number: status, call site, verb text, t+s, offsets, detail.
 declare -a SC_RSTAT=() SC_RLINE=() SC_RDESC=() SC_RT=() SC_ROFF=() SC_RDET=()
 
@@ -462,7 +462,7 @@ _sc_boot_impl() {
     # rendered, settled frame: not black, and two consecutive grabs within 0.012 RMSE (KB-15).
     t0=$SECONDS; deadline=$((t0 + RIG_WORLD_LOAD)); hit=1
     for p in "$@"; do
-        if how=$(_sc_boot_ready "$p" "$deadline"); then out="$out $p ready ($how) +$((SECONDS-t0))s;"
+        if how=$(_sc_boot_ready "$p" "$deadline"); then out="$out $p ready ($how) +$((SECONDS-t0))s;"; SC_BOOT_HOW[$p]=$how
         else hit=0; miss="$miss $p"; fi
     done
     if [ "$hit" = 1 ]; then sleep "$RIG_BOOT_SETTLE"
@@ -472,17 +472,19 @@ _sc_boot_impl() {
 
 # _sc_boot_ready <p> <deadline> — echo "milestone" or "stable frame" once the client is ready; 1 at the deadline.
 _sc_boot_ready() {
-    local p=$1 deadline=$2 log disp tdir prev='' cur d m
+    local p=$1 deadline=$2 log disp tdir prev='' cur d m same=0
     log=$SC_RUN/client-$p.log; disp=$(_sc_disp "$p"); tdir=$(mktemp -d)
     while (( SECONDS < deadline )); do
         if grep -q 'Sending ID_PLAYER_MAP' "$log" 2>/dev/null; then rm -rf "$tdir"; echo milestone; return 0; fi
         cur=$tdir/$SECONDS.png
         if DISPLAY="$disp" import -window root "$cur" 2>/dev/null; then
             m=$(magick "$cur" -format '%[fx:mean]' info: 2>/dev/null)
+            # Three consecutive non-black grabs within 0.012 RMSE of each other (two comparisons).
             if [ -n "$prev" ] && awk -v m="${m:-0}" 'BEGIN{exit !(m+0 > 0.01)}'; then
                 d=$(_rig_rmse "$prev" "$cur")
-                if [ -n "$d" ] && awk -v v="$d" 'BEGIN{exit !(v+0 <= 0.012)}'; then rm -rf "$tdir"; echo "stable frame"; return 0; fi
-            fi
+                if [ -n "$d" ] && awk -v v="$d" 'BEGIN{exit !(v+0 <= 0.012)}'; then same=$((same+1)); else same=0; fi
+                [ "$same" -ge 2 ] && { rm -rf "$tdir"; echo "stable frame"; return 0; }
+            else same=0; fi
             prev=$cur
         fi
         sleep 1
@@ -504,7 +506,9 @@ _scv_login() {
     esac
     re="\[rig-bridge\] player $p in"
     if ! _sc_poll "$cap" _sc_grep_from "$(_sc_logfile server)" "${SC_OFF[server]:-0}" "$re"; then
-        _sc_infra "login $p: no '[rig-bridge] player $p in' in server.log within ${cap}s (wrong password, or the client never reached the world; see client-$p.log)"
+        local hint=''
+        [ "${SC_BOOT_HOW[$p]:-}" = "stable frame" ] && hint="; the boot milestone was a settled frame, possibly a loading screen: raise RIG_WORLD_LOAD"
+        _sc_infra "login $p: no '[rig-bridge] player $p in' in server.log within ${cap}s (wrong password, or the client never reached the world; see client-$p.log$hint)"
         return 1
     fi
     SC_IN[$p]=1
@@ -1015,8 +1019,6 @@ _sc_run_one() {
         -) rig_clear_state ;;
         *) rig_load_scenario "$SC_DIR/$FIXTURE" ;;
     esac
-    # A fixture may hold only some state subdirs; the server expects all six to exist.
-    for k in $RIG_STATE_SUBDIRS; do mkdir -p "$RIG_CORESCRIPTS/data/$k"; done
     compare_set_refs "$SC_DIR/reference-images" "" "$SC_RUN/review"
     _sc_write_env
     SC_SETUP_WHAT="loading hooks.sh"
@@ -1368,6 +1370,16 @@ EOF
     _check "verdict: unreferenced pair input is OK, other NO-REFERENCE fails" "$(cat "$SC_RUN/RESULT")" "$(_sc_result_line FAIL 1 selftest 1 0 1)"
     _check "verdict: pair input row rewritten" "$(sed -n 2p "$SC_RUN/steps.tsv" | cut -f4)" OK
     SC_STRICT=0
+    out=$(SC_RUN=$t/run2b; mkdir -p "$SC_RUN"; SC_RSTAT=(); SC_FINAL=0; SC_PAIRIN=(); SC_SHOTROW=()
+          SC_CUR_STEP=1; SC_CUR_LINE=steps.sh:1; SC_CUR_DESC="shot a 30"; _sc_row REGRESSION "" "x" >/dev/null
+          SC_CUR_STEP=2; SC_CUR_LINE=steps.sh:2; SC_CUR_DESC="assert"; _sc_row PASS "" "x" >/dev/null
+          _sc_finalize >/dev/null; cat "$SC_RUN/RESULT")
+    _check "verdict: a moved reference alone -> REGRESSION 2" "$out" "$(_sc_result_line REGRESSION 2 selftest 0 1 1)"
+    out=$(SC_RUN=$t/run2c; mkdir -p "$SC_RUN"; SC_RSTAT=(); SC_FINAL=0; SC_PAIRIN=(); SC_SHOTROW=(); SC_ATTEMPT=2
+          SC_CUR_STEP=1; SC_CUR_LINE=steps.sh:1; SC_CUR_DESC="assert"; _sc_row PASS "" "x" >/dev/null
+          _sc_finalize >/dev/null; cat "$SC_RUN/RESULT")
+    _check "verdict: a pass on attempt 2 -> PASS-RETRY 0" "$out" "$(_sc_result_line PASS-RETRY 0 selftest 0 0 2)"
+    _check "aggregate: no codes -> 3"         "$(_sc_aggregate)" 3
 
     SC_RUN=$t/run3; mkdir -p "$SC_RUN"; SC_RSTAT=(); SC_STEP=0; SC_FINAL=0; SC_INFRA=''; SC_SHOTROW=(); SC_PAIRIN=()
     SC_DIR=$t/s3; mkdir -p "$SC_DIR"
