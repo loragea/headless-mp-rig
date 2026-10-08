@@ -857,6 +857,14 @@ rig_doctor() {
     # -- server scripts --
     if [ -d "$RIG_CORESCRIPTS/scripts" ]; then _rd_ok "RIG_CORESCRIPTS: $RIG_CORESCRIPTS (only read when a run builds a work copy with rig_corescripts_overlay)"
     else _rd_fail "RIG_CORESCRIPTS: no scripts/ in $RIG_CORESCRIPTS (clone TES3MP CoreScripts or your fork's and point RIG_CORESCRIPTS at it)"; fi
+    if [ -d "$RIG_CORESCRIPTS/scripts" ]; then
+        # The server bridge (overlay/scripts/custom/rig-bridge.lua) is loaded by a line appended to
+        # scripts/customScripts.lua and registers its handlers through customEventHooks (CoreScripts 0.7+).
+        if [ -f "$RIG_CORESCRIPTS/scripts/customScripts.lua" ]; then _rd_ok "RIG_CORESCRIPTS: scripts/customScripts.lua (the rig's server bridge is required from it)"
+        else _rd_fail "RIG_CORESCRIPTS: no scripts/customScripts.lua in $RIG_CORESCRIPTS — the rig loads its server bridge by appending to it (TES3MP CoreScripts 0.7+ layout)"; fi
+        if grep -qs 'customEventHooks' "$RIG_CORESCRIPTS/scripts/eventHandler.lua" "$RIG_CORESCRIPTS/scripts/serverCore.lua"; then _rd_ok "RIG_CORESCRIPTS: customEventHooks API present"
+        else _rd_fail "RIG_CORESCRIPTS: no customEventHooks in scripts/eventHandler.lua or serverCore.lua — the rig's server bridge needs the TES3MP CoreScripts 0.7+ event-hook API (logins, setup verbs and probe requests would all time out)"; fi
+    fi
     case $RIG_MASTER_ANNOUNCE in 0|1) ;; *) _rd_fail "RIG_MASTER_ANNOUNCE: '$RIG_MASTER_ANNOUNCE' is not 0 or 1";; esac
     case ${RIG_RDF_BUILTIN:-1} in 0|1) ;; *) _rd_fail "RIG_RDF_BUILTIN: '$RIG_RDF_BUILTIN' is not 0 or 1";; esac
 

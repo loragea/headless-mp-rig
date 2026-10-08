@@ -28,8 +28,20 @@
 --      hands them to its Lua console handlers before it echoes MWScript commands to the server.
 --
 -- Globals: RigBridgePoll only — TES3MP timers call a global function by name.
+--
+-- Prerequisites: the TES3MP CoreScripts API of 0.7 and later (customEventHooks, logicHandler, Players,
+-- LoadedCells; Player/Cell:SaveToDrive for the save verbs), a scripts/customScripts.lua that
+-- serverCore.lua requires, and the io and os libraries. Without customEventHooks or logicHandler the
+-- bridge logs one line saying so and stays off, so the server still starts; a verb whose function is
+-- missing answers err-<seq> naming it.
 
 local rigBridge = {}
+
+if customEventHooks == nil or logicHandler == nil or Players == nil or io == nil or os == nil then
+    tes3mp.LogMessage(2, "[rig-bridge] off: needs the TES3MP 0.7+ CoreScripts API (customEventHooks, logicHandler, "
+        .. "Players) and the io and os libraries; setup verbs, probe requests and login waits will time out")
+    return rigBridge
+end
 
 local POLL_MS = 250
 local DRAIN_PER_TICK = 20
@@ -39,8 +51,16 @@ if bridgeDir == "" then bridgeDir = nil end
 local nextSeq = 1
 local timerId = nil
 
+local LOG_INFO = (enumerations ~= nil and enumerations.log ~= nil and enumerations.log.INFO) or 1
+
 local function log(text)
-    tes3mp.LogMessage(enumerations.log.INFO, "[rig-bridge] " .. text)
+    tes3mp.LogMessage(LOG_INFO, "[rig-bridge] " .. text)
+end
+
+-- need(name, fn) — false and a message when this CoreScripts lacks a function a verb calls.
+local function need(name, fn)
+    if type(fn) ~= "function" then return false, "this CoreScripts has no " .. name end
+    return true
 end
 
 local function oneLine(s)
@@ -78,7 +98,7 @@ local function pidOf(name)
     if name == nil then return nil end
     for pid, player in pairs(Players) do
         if player ~= nil and player.accountName ~= nil and string.lower(player.accountName) == string.lower(name)
-            and player:IsLoggedIn() then
+            and (player.IsLoggedIn == nil or player:IsLoggedIn()) then
             return pid
         end
     end
@@ -100,6 +120,8 @@ local handlers = {}
 handlers.console = function(seq, pid, f)
     if f[3] == nil or f[3] == "" then return false, "no console command" end
     if f[4] ~= nil then return false, "the command holds a tab (it would run only up to the tab)" end
+    local ok, why = need("logicHandler.RunConsoleCommandOnPlayer", logicHandler.RunConsoleCommandOnPlayer)
+    if not ok then return false, why end
     logicHandler.RunConsoleCommandOnPlayer(pid, f[3], false)
     return true, "sent to pid " .. pid
 end
@@ -110,6 +132,8 @@ handlers.object = function(seq, pid, f)
         return false, "expected <cell> <refnum-mpnum> <command>"
     end
     if f[6] ~= nil then return false, "the command holds a tab (it would run only up to the tab)" end
+    local ok, why = need("logicHandler.RunConsoleCommandOnObjects", logicHandler.RunConsoleCommandOnObjects)
+    if not ok then return false, why end
     logicHandler.RunConsoleCommandOnObjects(pid, cmd, cell, { index }, false)
     return true, "sent to pid " .. pid .. " for " .. index .. " in " .. cell
 end
@@ -117,6 +141,10 @@ end
 handlers.probe = function(seq, pid, f)
     local kind = f[3]
     if kind == nil or not kind:match("^[%w_]+$") then return false, "bad probe kind" end
+    local ok, why = need("logicHandler.RunConsoleCommandOnPlayer", logicHandler.RunConsoleCommandOnPlayer)
+    if not ok then return false, why end
+    -- The command also stays in Players[pid].consoleCommandsQueued: a `lua ...` command is never echoed
+    -- back, so nothing removes it. One short string per request; harmless.
     logicHandler.RunConsoleCommandOnPlayer(pid, "lua rigprobe " .. kind .. " " .. seq, false)
     return true, "sent to pid " .. pid
 end
@@ -134,6 +162,8 @@ handlers.lua = function(seq, pid, f)
 end
 
 handlers.save = function(seq, pid, f)
+    local ok, why = need("Player:SaveToDrive", Players[pid].SaveToDrive)
+    if not ok then return false, why end
     Players[pid]:SaveToDrive()
     return true, "saved player " .. tostring(Players[pid].accountName)
 end
@@ -142,7 +172,10 @@ end
 handlers.savecell = function(seq, pid, f)
     local cell = f[3]
     if cell == nil or cell == "" then return false, "no cell" end
+    if LoadedCells == nil then return false, "this CoreScripts has no LoadedCells table" end
     if LoadedCells[cell] == nil then return false, "cell " .. cell .. " is not loaded" end
+    local ok, why = need("Cell:SaveToDrive", LoadedCells[cell].SaveToDrive)
+    if not ok then return false, why end
     LoadedCells[cell]:SaveToDrive()
     return true, "saved cell " .. cell
 end
@@ -194,9 +227,13 @@ end
 -- Names the data dir the server actually uses: proof that the run's work copy (not the user's clone)
 -- is the server home.
 customEventHooks.registerHandler("OnServerPostInit", function(eventStatus)
-    log("loaded; data path " .. tostring(config.dataPath))
+    log("loaded; data path " .. tostring(config ~= nil and config.dataPath or "?"))
     if bridgeDir == nil then
         log("commands off (RIG_BRIDGE_DIR is not set)")
+        return
+    end
+    if type(tes3mp.CreateTimer) ~= "function" then
+        log("commands off: this server has no tes3mp.CreateTimer")
         return
     end
     timerId = tes3mp.CreateTimer("RigBridgePoll", POLL_MS)

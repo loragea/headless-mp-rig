@@ -377,3 +377,11 @@ Verbs: `console <p> <cmd>`, `object <p> <cell> <refnum-mpnum> <cmd>`, `probe <p>
 `lua rigprobe <kind> <seq>`), `lua <p>`, `save <p>`, `savecell - <cell>`. The bridge adds one global
 (`RigBridgePoll`, the timer callback TES3MP calls by name).
 
+**Prerequisites** (checked by `bin/rig doctor`): the CoreScripts tree has `scripts/customScripts.lua`
+and `serverCore.lua` requires it (the rig appends `require("custom/rig-bridge")` to it); the
+TES3MP 0.7+ CoreScripts API: `customEventHooks`, `logicHandler` (`RunConsoleCommandOnPlayer`,
+`RunConsoleCommandOnObjects`), `Players`, `LoadedCells`, `Player:SaveToDrive`, `Cell:SaveToDrive`;
+the Lua `io` and `os` libraries (present in stock TES3MP). Without the event hooks or `logicHandler`
+the bridge logs `[rig-bridge] off: …` and stays off, so the server still starts; every login then
+fails as `INFRA` naming that line. A verb whose function is missing answers `err-<seq>` naming it.
+

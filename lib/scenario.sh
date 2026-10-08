@@ -605,6 +605,8 @@ _scv_login() {
     if ! _sc_poll "$cap" _sc_grep_from "$(_sc_logfile server)" "${SC_OFF[server]:-0}" "$re"; then
         local hint=''
         [ "${SC_BOOT_HOW[$p]:-}" = "stable frame" ] && hint="; the boot milestone was a settled frame, possibly a loading screen: raise RIG_WORLD_LOAD"
+        grep -qs '\[rig-bridge\] off' "$(_sc_logfile server)" && hint="$hint; the server bridge is off: see its '[rig-bridge] off' line in server.log"
+        grep -qs '\[rig-bridge\] loaded' "$(_sc_logfile server)" || hint="$hint; server.log has no '[rig-bridge] loaded' line: the bridge did not load (bin/rig doctor checks RIG_CORESCRIPTS)"
         _sc_infra "login $p: no '[rig-bridge] player $p in' in server.log within ${cap}s (wrong password, or the client never reached the world; see client-$p.log$hint)"
         return 1
     fi
