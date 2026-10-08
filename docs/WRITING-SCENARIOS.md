@@ -8,6 +8,12 @@ A **scenario** is a directory holding **saved server-state + a scripted choreogr
 - **(b) a choreography** — `steps.sh`, one verb per line: per-player actions, with screenshots and
   log assertions at fixed points.
 
+**The way in is the teaching set**: `scenarios/teach-*` are six small scenarios on free content,
+each teaching one verification pattern (a log line, the client probe, setup by server command, a
+frame pair, a blessed reference frame, an extra plugin) with every line commented, a README per
+scenario saying what a red means, and a table of them in `scenarios/README.md`. Run one, read its
+`steps.sh`, then copy the one closest to your test.
+
 `bin/rig new <dir> --content <profile> --players "a b"` scaffolds one; `bin/rig lint` checks it;
 `bin/rig run` runs it. The keys, verbs and run directory are specified in
 [SCENARIO-FORMAT.md](SCENARIO-FORMAT.md); this guide covers what that format cannot tell you:

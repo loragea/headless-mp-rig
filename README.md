@@ -53,7 +53,9 @@ writes lands in its own directory under `RIG_RUNS` (default `runs/`), printed on
 build dir and your CoreScripts clone are only read. `bin/rig list` shows the scenarios it finds.
 
 **3. Write your own** scenario: a directory with `scenario.conf` (players, content profile, fixture)
-and `steps.sh` (one verb per line).
+and `steps.sh` (one verb per line). Start from the teaching set, `scenarios/teach-*`: six small
+commented scenarios, one verification pattern each (log line, client probe, setup by command, frame
+pair, blessed reference frame, extra plugin), listed in `scenarios/README.md`.
 
 ```sh
 bin/rig new scenarios/local/my-test --content example --players "a b"
@@ -128,6 +130,7 @@ overlay/             the rig's server-side bridge, layered into every CoreScript
 probe/               the client probe: a read-only Lua player script loaded with PROBE=1 (OpenMW >= 0.48)
 templates/scenario/  the scaffold `bin/rig new` copies
 scenarios/example/   the worked example: fixture, overlay, references (free example-suite content)
+scenarios/teach-*/   the teaching set: one verification pattern per scenario (scenarios/README.md)
 docs/                the manuals (below)
 ```
 
@@ -154,8 +157,8 @@ docs/                the manuals (below)
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules and how to add a capability or recipe.
-CI runs shell lint, the five library selftests and `bin/rig lint` on the example and on a scaffolded
-scenario; none of it needs a game binary.
+CI runs shell lint, the five library selftests and `bin/rig lint` on the example, the teaching set
+and a scaffolded scenario; none of it needs a game binary.
 
 ## License
 
