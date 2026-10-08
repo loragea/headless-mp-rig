@@ -25,23 +25,17 @@ LOG_REF_DIR=${RIG_LOG_REF_DIR:-}
 LOG_REVIEW_DIR=${RIG_LOG_REVIEW_DIR:-}
 
 # A line is SIGNIFICANT (kept in the signature) if it matches this vocabulary; everything else is
-# dropped as noise. Extend via RIG_LOG_MARKERS for a specific run.
+# dropped as noise. Each scenario declares its own vocabulary (scenario.conf LOG_MARKERS, or
+# RIG_LOG_MARKERS / logcheck_set_refs for library consumers): the events that validate its checkpoints
+# AND fire deterministically. Keep it narrow: a live multi-client run is non-deterministic (ambient
+# cell loads, weather ticks, the order clients finish connecting), so "every ID_* packet" drifts
+# every run.
 #
-# Deliberately NARROW — a live multi-client run is inherently non-deterministic (ambient loading of
-# neighbour cells, weather ticks, the order in which clients finish connecting), so a broad "every
-# ID_*/every On* callback" vocabulary drifts ~20 lines every run and the check would REVIEW every
-# time. The default keeps only events that (a) validate a checkpoint and (b) fire deterministically,
-# plus the error tripwires that must stay ABSENT:
-#   - connection gating + player/DedicatedPlayer creation (the mutual-visibility spawn)
-#   - OnPlayerEndCharGen (chargen completed)
-#   - the active-spells sync packet ID_PLAYER_SPELLS_ACTIVE (deterministic when fresh characters
-#     receive a known number of effects; drop it via RIG_LOG_MARKERS if your scenario's effects vary)
-#   - error signatures that must never appear
-# Intentionally EXCLUDED as noise: OnObjectSpawn/OnContainer/OnActorList/OnCellLoad/OnWorldWeather/
-# OnPlayerCellChange, the "DedicatedPlayer ... moved to <cell>" position stream, and Received
-# ID_OBJECT_PLACE (it also fires for ambient cell objects, which drift). For a scenario-specific
-# action, have your server script log one deterministic line and add it to RIG_LOG_MARKERS.
-LOG_MARKERS=${RIG_LOG_MARKERS:-'(allowed|not allowed) to connect|has (connected|disconnected)|Creating new (player|DedicatedPlayer)|Called "OnPlayerEndCharGen"|ID_PLAYER_SPELLS_ACTIVE|Error in frame|script error|Server crash|Cannot get class|RefId is not a string'}
+# The default is only a tripwire set, true for any OpenMW-multiplayer build: server-script errors,
+# crashes, aborts and failed assertions. A signature built from it is empty on a healthy run and
+# names the error line otherwise.
+LOG_TRIPWIRE_MARKERS='Error in frame|script error|Server crash|bad argument|luabridge|Segmentation fault|core dumped|terminate called|Assertion .*failed|unhandled exception'
+LOG_MARKERS=${RIG_LOG_MARKERS:-$LOG_TRIPWIRE_MARKERS}
 
 # logcheck_set_refs <refdir> [reviewdir] [markers] — bind this scenario's signature set, and optionally
 # its review dir and marker vocabulary (empty = keep the current value / the defaults above).

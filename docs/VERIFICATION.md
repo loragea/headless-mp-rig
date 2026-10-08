@@ -48,8 +48,12 @@ Logs are noisy (timestamps, IP:port, hex addresses, refnums, pids), so a byte-di
 deliberately **narrow** vocabulary (`RIG_LOG_MARKERS`) so a live multi-client run's inherent
 non-determinism (ambient cell loads, weather ticks, connect-order races) doesn't drift every run — and
 diffs *that*. Keep only events that (a) validate a checkpoint and (b) fire deterministically, plus the
-error tripwires that must stay **absent** (`Error in frame`, `script error`, crashes). Override the
-vocabulary per run with `RIG_LOG_MARKERS`; mask a newly-noisy token by extending `_log_normalize`.
+error tripwires that must stay **absent** (`Error in frame`, `script error`, crashes). A scenario
+declares its vocabulary in `scenario.conf` (`LOG_MARKERS`, which may include `$RIG_TRIPWIRES`); a
+library consumer sets `RIG_LOG_MARKERS` or passes it to `logcheck_set_refs`. The default
+(`LOG_TRIPWIRE_MARKERS` in `lib/logcheck.sh`) holds only fatal, crash and assertion lines, so a
+signature built from it is empty on a healthy run. Mask a newly-noisy token by extending
+`_log_normalize`.
 
 Run `lib/logcheck.sh selftest` — synthetic logs prove identical→PASS, volatile-only-diff→PASS
 (normalization), missing-event→REVIEW.
