@@ -1,5 +1,5 @@
 # KB-21-server-pushed-console-command — Push console commands from the server: a typed one gets the client kicked
-Read when: a test needs to set up game state with a console command (MWScript or `lua …`) on a multiplayer client, or a client was kicked right after a console command.
+Read when: a test needs to set up game state with a console command (MWScript or `lua …`) on a multiplayer client, or a client was kicked right after a console command or right after the object it placed.
 
 **Confidence: VALIDATED** (OpenMW 0.51-based TES3MP client and server, stock CoreScripts)
 
@@ -46,13 +46,39 @@ assert absent server 'kicked'
 ```
 
 Console commands and probe requests to the same player travel the same ordered channel, so a
-`probe` right after a `console` already sees the command's effect.
+`probe` right after a `console` sees the command's **synchronous** effect: one the client applies
+while it runs the command (`ModCurrentFatigue` changes fatigue inside the packet handler). An effect
+that needs a round trip through the server, or a later frame, is not there yet: `placeatpc` (the
+object exists once the server echoes its ObjectPlace), `journal` as another player sees it (the
+server shares it), `playgroup` (starts on the next frame). Wait for its server or client line, or `settle`, before probing it.
+
+**Commands that create or change objects need the console permission too.** The queued-command
+exemption covers only the command's own echo (`OnConsoleCommand`, stock
+`scripts/eventHandler.lua:164`). An object packet the command then causes carries the console as
+its origin (`placeatpc` sends an ObjectPlace), and the handler shared by every object packet kicks a
+player who is not allowed the console, whether or not the server queued the command
+(`eventHandler.lua:1379`, `OnGenericObjectEvent`; container packets have the same check at
+`:1571`). Give that one player the console first, through the bridge's `lua` verb; the server
+configuration stays stock:
+
+```
+server f "player.data.settings.consoleAllowed = true"      # per player, as a staff member has it
+console f "placeatpc some_item 1 0 0"
+wait server 'Accepted ObjectPlace from f' 8
+```
+
+`logicHandler.IsPlayerAllowedConsole` (stock `scripts/logicHandler.lua:157`) is true for an admin or
+a player whose `data.settings.consoleAllowed` is `true`. The value is saved with the player record;
+in a rig run that is the run's throwaway work copy, so the fixture is unchanged.
 
 **Dead ends.**
 
 - *Typing the command* with the console open: kicked as above (no `allowConsole`).
-- *Turning on `config.allowConsole`* to avoid the kick: it changes the server under test, and a
-  scenario then passes on a server configuration nobody plays.
-- *Setting stats with a client console command and expecting them to stick* (**THEORY**): the server owns
-  player stats in multiplayer and may push its own values back; set them server-side (`server <p>
-  "<lua>"`) when the test needs them to persist.
+- *Turning on `config.allowConsole`* to avoid the kick: it changes the server under test for every
+  player, and a scenario then passes on a server configuration nobody plays. The per-player
+  `consoleAllowed` above is the narrow form.
+- *Expecting the server to undo a stat change made by a console command*: it does not. The client is
+  authoritative for its own health, magicka and fatigue and reports them to the server, which stores
+  the reported values (stock `eventHandler.lua:664,994`, on disconnect and cell change); the server
+  pushes dynamic stats to the client only at login or when a server script sets them. A
+  `ModCurrentFatigue` pushed through `console` therefore sticks.
