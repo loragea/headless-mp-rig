@@ -43,7 +43,7 @@ RIG_SCENARIOS=${RIG_SCENARIOS:-$RIG_ROOT/scenarios}   # --tag/--all search roots
 SC_DEFAULT_MARKERS=$LOG_MARKERS     # logcheck.sh's vocabulary, used when LOG_MARKERS is not set
 # The kinds the client probe answers (probe/scripts/rig/probe.lua); `dump` requests all of them.
 SC_PROBE_KINDS="cell stats quest topics inv nearby items effects faction spells time weather"
-SC_CONF_KEYS="NAME PURPOSE PLAYERS PASSWORDS TAGS CONTENT FIXTURE OVERLAY PROBE SETTINGS LOG_MARKERS COST WIGGLE"
+SC_CONF_KEYS="NAME PURPOSE PLAYERS PASSWORDS TAGS CONTENT FIXTURE OVERLAY PROBE PROBE_RANGE PROBE_PERIOD SETTINGS LOG_MARKERS COST WIGGLE"
 SC_VERBS="boot login logout wiggle settle key hold type mouse click rmb look turn chat cast scroll hidechat
 console console-file console-object server save probe wait assert shot pair signature checkpoint mark note artifact"
 
@@ -120,6 +120,9 @@ _sc_load_conf() {
         SC_SLOT[$p]=$((i+1)); SC_PASS[$p]=${pw[i]:-$p}
     done
     case $WIGGLE in 0|1) ;; *) SC_CONF_ERR="scenario.conf: WIGGLE must be 0 or 1"; return 1;; esac
+    PROBE_RANGE=${PROBE_RANGE:-}; PROBE_PERIOD=${PROBE_PERIOD:-}
+    [ -z "$PROBE_RANGE" ] || [[ $PROBE_RANGE =~ ^[0-9]+$ ]] || { SC_CONF_ERR="scenario.conf: PROBE_RANGE '$PROBE_RANGE' is not a distance in game units"; return 1; }
+    [ -z "$PROBE_PERIOD" ] || _sc_is_num "$PROBE_PERIOD" || { SC_CONF_ERR="scenario.conf: PROBE_PERIOD '$PROBE_PERIOD' is not a number of seconds"; return 1; }
     return 0
 }
 
@@ -1493,6 +1496,9 @@ _sc_run_one() {
     fi
     if [ "$PROBE" = 1 ]; then
         SC_SETUP_WHAT="installing the client probe"
+        # The scenario's own probe settings win over rig.conf's.
+        [ -n "$PROBE_RANGE" ] && RIG_PROBE_RANGE=$PROBE_RANGE
+        [ -n "$PROBE_PERIOD" ] && RIG_PROBE_PERIOD=$PROBE_PERIOD
         rig_use_probe "$SC_RUN/probe"
     fi
     # The server bridge reads its commands from here (rig-bridge.lua: RIG_BRIDGE_DIR).
@@ -1762,6 +1768,7 @@ CONTENT=example
 LOG_MARKERS="Called \"OnPlayerJournal\"|$RIG_TRIPWIRES"
 COST=3
 WIGGLE=0
+PROBE_RANGE=4096
 P_QUEST_ID=quest_01
 P_TOPIC="latest rumors"
 EOF
@@ -1770,12 +1777,15 @@ EOF
     _check "conf: value with comment"     "$(_sc_conf_get "$t/s1/scenario.conf" TAGS)" "smoke two-player"
     _check "conf: bare value"             "$(_sc_conf_get "$t/s1/scenario.conf" P_QUEST_ID)" "quest_01"
     if _sc_has_tags "$t/s1" two-player smoke && ! _sc_has_tags "$t/s1" nightly; then _ok "conf: tag selection"; else _bad "conf: tag selection"; fi
+    mkdir -p "$t/s1b"; printf 'PLAYERS=a\nCONTENT=example\nPROBE_RANGE=far\n' > "$t/s1b/scenario.conf"
+    if ( _sc_load_conf "$t/s1b" ); then _bad "conf: a non-numeric PROBE_RANGE is refused"
+    else _check "conf: a non-numeric PROBE_RANGE is refused" "$( _sc_load_conf "$t/s1b"; echo "$SC_CONF_ERR")" "scenario.conf: PROBE_RANGE 'far' is not a distance in game units"; fi
     printf 'NAME=x\nFOO=1\np_lower=2\n' > "$t/bad.conf"
     out=$(_sc_conf_check "$t/bad.conf"); rc=$?
     if [ "$rc" = 1 ] && grep -q 'unknown key FOO' <<<"$out" && grep -q 'unknown key p_lower' <<<"$out"; then _ok "conf: unknown keys rejected by name"
     else _bad "conf: unknown keys rejected by name" "rc=$rc out=$out"; fi
     if ( _sc_load_conf "$t/s1" && [ "$P_TOPIC" = "latest rumors" ] && [ "${SC_SLOT[b]}" = 2 ] && [ "${SC_PASS[a]}" = a ] \
-         && [[ $LOG_MARKERS == *"Server crash"* ]] && [ "$(bash -c 'echo "$P_QUEST_ID"')" = quest_01 ] ); then
+         && [[ $LOG_MARKERS == *"Server crash"* ]] && [ "$(bash -c 'echo "$P_QUEST_ID"')" = quest_01 ] && [ "$PROBE_RANGE" = 4096 ] ); then
         _ok "conf: sourced for a run (P_* exported, slots, password default, \$RIG_TRIPWIRES)"
     else _bad "conf: sourced for a run"; fi
 

@@ -36,6 +36,8 @@ outside this list fails, except `P_<NAME>` (upper case, digits, `_`).
 | `FIXTURE` | server state to resume: a dir holding the six state subdirs; `.` = this dir, `-` = blank state | `.` |
 | `OVERLAY` | CoreScripts overlay dir, applied after the rig's own `overlay/` | none |
 | `PROBE` | `1` = load the client probe (§7) in every client: the probe verbs, `probe-<p>.log`, the probe's boot milestone. Needs an OpenMW ≥ 0.48 client (Lua player scripts); on an older client (no `builtin.omwscripts` in the build's resources, or `RIG_RDF_BUILTIN=0`) the run prints a note, turns the probe off and the probe verbs `SKIP` | `0` |
+| `PROBE_RANGE` | the probe's `nearby`/`items` radius in game units for this scenario; overrides `RIG_PROBE_RANGE` | `RIG_PROBE_RANGE` (2048) |
+| `PROBE_PERIOD` | the probe's heartbeat period in seconds for this scenario; overrides `RIG_PROBE_PERIOD` | `RIG_PROBE_PERIOD` (5) |
 | `SETTINGS` | a client `settings.cfg` seeded into every client profile | none |
 | `LOG_MARKERS` | ERE vocabulary for `signature`; may reference `$RIG_TRIPWIRES` | `lib/logcheck.sh` default |
 | `COST` | approximate minutes on software GL | — |
@@ -301,7 +303,7 @@ caps=<list> period=<s> range=<units>`. A request: the console command `lua rigpr
 which only the server sends (the `probe` verb). Events with `seq=0`: `quest` when a quest index
 changes (the engine's `onQuestUpdate`, also when the server loads the journal at login), `cell` when
 the player's cell changes, `inv` when the inventory changes (checked every 2 s). A heartbeat with
-`seq=0`: `cell` and `stats` every `RIG_PROBE_PERIOD` seconds (default 5).
+`seq=0`: `cell` and `stats` every `PROBE_PERIOD` (else `RIG_PROBE_PERIOD`) seconds (default 5).
 
 | kind | one line per … | fields |
 |---|---|---|
@@ -310,8 +312,8 @@ the player's cell changes, `inv` when the inventory changes (checked every 2 s).
 | `quest` | started quest | `id stage finished` (0/1) |
 | `topics` | known topic, after one `n=<count>` line | `topic` |
 | `inv` | record id, after one `n=<ids> more=0/1` line (at most 40) | `item=<id>:<count>` `id` `count` |
-| `nearby` | actor, door or container within `RIG_PROBE_RANGE` (default 2048), nearest first (at most 80) | actors: `actor` (name; a remote player is an NPC named after its login) `rec` `dist` `kind` (`npc`/`creature`/`player`) `x y z` (absolute position, rounded) `stance` `anim` (lower-body animation group, `none` when idle without one) `animup` (torso group) `hp` `dead` (0/1) `weapon` (record id of the right-hand equipment, `none`); doors and containers: `obj` (record id) `name` `kind` (`door`/`container`) `dist` `lock` (level) `locked` (0/1) |
-| `items` | item lying in the active cells within `RIG_PROBE_RANGE`, nearest first (at most 80) | `obj` (record id) `name` `count` `dist` `x y z` |
+| `nearby` | actor, door or container within the range (`PROBE_RANGE`, else `RIG_PROBE_RANGE`, default 2048), nearest first (at most 80) | actors: `actor` (name; a remote player is an NPC named after its login) `rec` `dist` `kind` (`npc`/`creature`/`player`) `x y z` (absolute position, rounded) `stance` `anim` (lower-body animation group, `none` when idle without one) `animup` (torso group) `hp` `dead` (0/1) `weapon` (record id of the right-hand equipment, `none`); doors and containers: `obj` (record id) `name` `kind` (`door`/`container`) `dist` `lock` (level) `locked` (0/1) |
+| `items` | item lying in the active cells within the range, nearest first (at most 80) | `obj` (record id) `name` `count` `dist` `x y z` |
 | `effects` | active spell on the player, then one per applied effect of it, then one per summed active effect (at most 80 lines) | spell: `spell` (id) `name` `caster` (record id) `castername`; its effects: `spell` `effect` (id) `mag` (this frame) `left` (seconds; absent for constant effects); summed: `net=1` `effect` `mag` |
 | `faction` | faction the player is in, after one `n=<count>` line | `faction` (id) `rank` |
 | `spells` | spell the player knows, after one `n=<count>` line (at most 80) | `spell` (id) `name` |
