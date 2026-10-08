@@ -841,7 +841,7 @@ declare -A SC_PROBE_REQS=()
 _sc_probe_usable() {
     local p=$1
     SC_PROBE_WHY=''
-    if [ "${PROBE:-0}" != 1 ]; then SC_PROBE_WHY="probe: off (PROBE=1 in scenario.conf loads it)"; return 1; fi
+    if [ "${PROBE:-0}" != 1 ]; then SC_PROBE_WHY=${SC_PROBE_OFF_WHY:-"probe: off (PROBE=1 in scenario.conf loads it)"}; return 1; fi
     if ! grep -aq '^\[rigprobe:ready\]' "$(_sc_logfile "probe-$p")" 2>/dev/null; then
         SC_PROBE_WHY="probe: client $p never logged [rigprobe:ready] (a client without OpenMW Lua player scripts, or the probe failed to load: see client-$p.log)"
         return 1
@@ -1484,6 +1484,13 @@ _sc_run_one() {
     fi
     SC_SETUP_WHAT="selecting content profile $CONTENT"
     RIG_CONTENT_SOFT=1 rig_use_content "$CONTENT" || exit
+    if [ "$PROBE" = 1 ] && ! rig_client_lua; then
+        # A client that cannot load .omwscripts would be refused at login by the plugin check (the
+        # probe is in requiredDataFiles.json): run without the probe instead; its verbs SKIP.
+        SC_PROBE_OFF_WHY="probe: off for this client ($RIG_CLIENT_LUA_WHY)"
+        _sc_say "note: PROBE=1, but $RIG_CLIENT_LUA_WHY: the probe is off for this run and the probe verbs SKIP"
+        PROBE=0
+    fi
     if [ "$PROBE" = 1 ]; then
         SC_SETUP_WHAT="installing the client probe"
         rig_use_probe "$SC_RUN/probe"
@@ -1832,6 +1839,15 @@ EOF
     mark >/dev/null; : > "$SC_RUN/client-a.log"; echo 'after restart' >> "$SC_RUN/client-a.log"
     assert client a 'after restart' 0 >/dev/null;     _check "window: a rewritten (shorter) log is read from 0" "$SC_LAST_STATUS" PASS
     assert probe a nearby actor=b >/dev/null;         _check "probe: PROBE=0 -> SKIP" "$SC_LAST_STATUS" SKIP
+
+    # The client probe needs a client that loads Lua scripts (rig_client_lua).
+    out=$(
+        RIG_BUILD=$t/b; mkdir -p "$RIG_BUILD/res/vfs"; printf 'resources=./res\n' > "$RIG_BUILD/openmw.cfg"
+        rig_client_lua; printf '%s ' "$?"
+        : > "$RIG_BUILD/res/vfs/builtin.omwscripts"; rig_client_lua; printf '%s ' "$?"
+        RIG_RDF_BUILTIN=0 rig_client_lua; printf '%s' "$?"
+    )
+    _check "probe: a pre-0.48 build (no builtin.omwscripts) or RIG_RDF_BUILTIN=0 has no Lua" "$out" "1 0 1"
 
     # -- 4. exit-code aggregation and RESULT format --
     _check "aggregate: all skipped -> 4"      "$(_sc_aggregate 4 4)" 4

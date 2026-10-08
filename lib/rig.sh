@@ -438,6 +438,25 @@ rig_use_content() {
     rig_add_content "$n" "${lines[@]}"
 }
 
+# rig_client_lua — 0 when RIG_BUILD's client can load OpenMW Lua scripts (.omwscripts, OpenMW >= 0.48),
+# which the client probe needs; else 1 with RIG_CLIENT_LUA_WHY saying why not. A 0.48+ build ships
+# builtin.omwscripts in its resources dir (resources= in RIG_BUILD/openmw.cfg, default resources/);
+# RIG_RDF_BUILTIN=0 declares an older client. A build without a resources dir to look at counts as able.
+rig_client_lua() {
+    local res
+    RIG_CLIENT_LUA_WHY=''
+    if [ "${RIG_RDF_BUILTIN:-1}" = 0 ]; then
+        RIG_CLIENT_LUA_WHY="RIG_RDF_BUILTIN=0 declares a pre-0.48 client (no Lua player scripts)"; return 1
+    fi
+    res=$(sed -nE 's/^[[:space:]]*resources[[:space:]]*=[[:space:]]*"?([^"]*)"?[[:space:]]*$/\1/p' "$RIG_BUILD/openmw.cfg" 2>/dev/null | tail -1)
+    [ -n "$res" ] || res=resources
+    case $res in /*) ;; *) res=$RIG_BUILD/$res ;; esac
+    if [ -d "$res" ] && ! find "$res" -maxdepth 2 -name builtin.omwscripts 2>/dev/null | grep -q .; then
+        RIG_CLIENT_LUA_WHY="no builtin.omwscripts under $res: a pre-0.48 client (no Lua player scripts)"; return 1
+    fi
+    return 0
+}
+
 # rig_use_probe <dir> — load the rig's client probe (probe/: rig-probe.omwscripts, a read-only Lua
 # player script; needs an OpenMW >= 0.48 client) in this run, after rig_use_content. Copies probe/ to
 # <dir> (a run-scoped directory), writes <dir>/scripts/rig/probe_conf.lua from RIG_PROBE_PERIOD,
@@ -800,7 +819,8 @@ RIG_GEOM_UNCHECKED RIG_PROFILE RIG_PROFILE2 RIG_PROFILE3 RIG_SETTINGS_SRC RIG_SH
 RIG_WORLD_LOAD RIG_BOOT_CAP RIG_BOOT_SETTLE RIG_CHARGEN_PWBOX RIG_CHARGEN_DLG RIG_WIGGLE_INTERVAL
 RIG_RDF_BUILTIN RIG_ROOT RIG_REF_DIR RIG_REF_MANIFEST RIG_REVIEW_DIR RIG_LOG_REF_DIR RIG_LOG_REVIEW_DIR
 RIG_LOG_MARKERS RIG_DEFAULT_METRIC RIG_DEFAULT_THRESHOLD RIG_DEFAULT_FUZZ RIG_CONTENT_SOFT EXAMPLE_SUITE
-RIG_SCENARIOS RIG_BUILD_ID RIG_LOGIN_CAP RIG_CHAT_KEY"
+RIG_SCENARIOS RIG_BUILD_ID RIG_LOGIN_CAP RIG_CHAT_KEY RIG_BRIDGE_CAP RIG_PROBE_CAP RIG_PROBE_PERIOD RIG_PROBE_RANGE
+RIG_PROBE_CAPS_OFF"
 rig_doctor() {
     local fails=0 conf k v n d f prof cfg seen=' '
     _rd_ok()   { echo "ok   $*"; }
@@ -867,6 +887,10 @@ rig_doctor() {
     fi
     case $RIG_MASTER_ANNOUNCE in 0|1) ;; *) _rd_fail "RIG_MASTER_ANNOUNCE: '$RIG_MASTER_ANNOUNCE' is not 0 or 1";; esac
     case ${RIG_RDF_BUILTIN:-1} in 0|1) ;; *) _rd_fail "RIG_RDF_BUILTIN: '$RIG_RDF_BUILTIN' is not 0 or 1";; esac
+    if [ -d "$RIG_BUILD" ]; then
+        if rig_client_lua; then _rd_ok "client probe: the client can load Lua player scripts (PROBE=1 scenarios load the probe)"
+        else _rd_warn "client probe: $RIG_CLIENT_LUA_WHY — PROBE=1 scenarios run with the probe off and their probe verbs SKIP"; fi
+    fi
 
     # -- run directory --
     if mkdir -p "$RIG_RUNS" 2>/dev/null && [ -w "$RIG_RUNS" ]; then _rd_ok "RIG_RUNS: $RIG_RUNS"
@@ -894,7 +918,8 @@ rig_doctor() {
     else _rd_fail "RIG_SCREEN: $RIG_SCREEN — the rig's window-centre and click coordinates assume 1280x720x24 (set RIG_GEOM_UNCHECKED=1 to override)"; fi
 
     # -- numbers --
-    for k in RIG_SERVER_LOAD RIG_WORLD_LOAD RIG_BOOT_CAP RIG_BOOT_SETTLE RIG_CHARGEN_PWBOX RIG_CHARGEN_DLG RIG_WIGGLE_INTERVAL; do
+    [[ $RIG_PROBE_RANGE =~ ^[0-9]+$ ]] || _rd_fail "RIG_PROBE_RANGE: '$RIG_PROBE_RANGE' is not a distance in game units"
+    for k in RIG_SERVER_LOAD RIG_WORLD_LOAD RIG_BOOT_CAP RIG_BOOT_SETTLE RIG_CHARGEN_PWBOX RIG_CHARGEN_DLG RIG_WIGGLE_INTERVAL RIG_PROBE_PERIOD; do
         [[ ${!k} =~ ^[0-9]+([.][0-9]+)?$ ]] || _rd_fail "$k: '${!k}' is not a number of seconds"
     done
     if [[ $RIG_WIGGLE_INTERVAL =~ ^[0-9]+$ ]] && [ "$RIG_WIGGLE_INTERVAL" -ge 30 ]; then

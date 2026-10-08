@@ -35,7 +35,7 @@ outside this list fails, except `P_<NAME>` (upper case, digits, `_`).
 | `CONTENT` | a content profile from `rig.conf` (`RIG_CONTENT_<name>_*`) | required |
 | `FIXTURE` | server state to resume: a dir holding the six state subdirs; `.` = this dir, `-` = blank state | `.` |
 | `OVERLAY` | CoreScripts overlay dir, applied after the rig's own `overlay/` | none |
-| `PROBE` | `1` = load the client probe (§7) in every client: the probe verbs, `probe-<p>.log`, the probe's boot milestone; needs an OpenMW ≥ 0.48 client (Lua player scripts) | `0` |
+| `PROBE` | `1` = load the client probe (§7) in every client: the probe verbs, `probe-<p>.log`, the probe's boot milestone. Needs an OpenMW ≥ 0.48 client (Lua player scripts); on an older client (no `builtin.omwscripts` in the build's resources, or `RIG_RDF_BUILTIN=0`) the run prints a note, turns the probe off and the probe verbs `SKIP` | `0` |
 | `SETTINGS` | a client `settings.cfg` seeded into every client profile | none |
 | `LOG_MARKERS` | ERE vocabulary for `signature`; may reference `$RIG_TRIPWIRES` | `lib/logcheck.sh` default |
 | `COST` | approximate minutes on software GL | — |
