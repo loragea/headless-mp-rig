@@ -329,12 +329,15 @@ kinds.effects = function(seq)
                'castername', caster and recordName(caster, actorKind(caster)) or nil })
         for _, e in pairs(get(function() return sp.effects end) or {}) do
             line({ 'spell', id, 'effect', idOf(get(function() return e.id end)),
+                   'attr', get(function() return e.affectedAttribute end), 'skill', get(function() return e.affectedSkill end),
                    'mag', get(function() return e.magnitudeThisFrame end),
                    'left', get(function() return e.durationLeft end) })
         end
     end
     for _, e in pairs(types.Actor.activeEffects(self)) do
-        line({ 'net', 1, 'effect', idOf(get(function() return e.id end)), 'mag', get(function() return e.magnitude end) })
+        line({ 'net', 1, 'effect', idOf(get(function() return e.id end)),
+               'attr', get(function() return e.affectedAttribute end), 'skill', get(function() return e.affectedSkill end),
+               'mag', get(function() return e.magnitude end) })
     end
     return n
 end
@@ -353,7 +356,9 @@ end
 
 kinds.spells = function(seq)
     local rows = {}
-    for _, sp in pairs(types.Actor.spells(self)) do
+    local list = types.Actor.spells(self)       -- indexable with a length; it has no pairs iterator
+    for i = 1, #list do
+        local sp = list[i]
         rows[#rows + 1] = { get(function() return sp.id end) or '?', get(function() return sp.name end) }
     end
     table.sort(rows, function(x, y) return x[1] < y[1] end)
