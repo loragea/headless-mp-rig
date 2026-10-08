@@ -89,7 +89,7 @@ Use it only for lines that can occur once per run.
 | `login <p> [returning\|fresh]` | type the name and password (`fresh` drives character generation); wait for the server's `[rig-bridge] player <p> in` (cap `RIG_LOGIN_CAP`) |
 | `logout <p>` | stop the client; wait for `[rig-bridge] player <p> out` |
 | `wiggle` | (re)start the idle wiggler on every booted display; `run` starts it after the first login unless `WIGGLE=0` |
-| `settle <secs> "<reason>"` | sleep; the reason is required by lint |
+| `settle <secs> "<reason>"` | sleep; the reason is required (a call without one fails) |
 
 **A failed `boot` or `login` stops the scenario**: that row is `FAIL`, every later verb is
 recorded `SKIP`, the RESULT is `INFRA`, exit 3.
@@ -108,7 +108,7 @@ recorded `SKIP`, the RESULT is `INFRA`, exit 3.
 | `turn <p> <dx> <steps>` | repeated horizontal offsets: a yaw turn |
 | `chat <p> "/cmd"` | open chat, type, submit |
 | `cast <p>` | held left click ([KB-1](cookbook/KB-1-synthetic-left-click-cast.md)) |
-| `scroll <p> <quickkey> [until server <ERE> <cap> tries <n>]` | quick-key, `space` (close the parchment), cast; with `until`, retry until the server logs the ERE ([KB-2](cookbook/KB-2-scroll-quick-key-read-parchment.md)) |
+| `scroll <p> <quickkey> [<closekey>\|none] [until server <ERE> <cap> tries <n>]` | read a scroll bound to a quick-key: the quick-key, the close key (default `space`, which closes the read parchment; `none` during combat, where no parchment opens), then a cast; with `until`, retry until the server logs the ERE ([KB-2](cookbook/KB-2-scroll-quick-key-read-parchment.md)). A plain quick-key is `key <p> <n>` |
 | `hidechat <p>` | press the chat toggle (`RIG_CHAT_KEY`, default `F6`) until the client logs `Chat hidden` ([KB-4](cookbook/KB-4-hide-chat-window.md)) |
 
 ### 3.4 Setup (server-pushed)
@@ -137,7 +137,7 @@ Each records `PASS` or `FAIL` and never aborts the scenario.
 | `assert server <ERE> [cap]` | server log past the last mark, polled up to `cap` (default 10 s; server stdout is block-buffered) |
 | `assert client <p> <ERE> [cap]` | the client log past the last mark, polled |
 | `assert absent server <ERE>` / `assert absent client <p> <ERE>` | whole log: no line matches |
-| `assert count server <fixed> <op> <n>` | whole server log, `grep -cF`; ops `= == != < <= > >=` |
+| `assert count server <fixed> <op> <n>` / `assert count client <p> <fixed> <op> <n>` | whole log, `grep -cF`; ops `= == != < <= > >=`, **quoted** (`'>='`: unquoted, `>` is a shell redirection) |
 | `assert probe …`, `assert probe-delta …` | probe not available yet: `SKIP` |
 | `assert json <relpath> '<python expression>'` | `python3 -I`; `d` is the parsed JSON document at `<work copy>/data/<relpath>`; truthy = `PASS` |
 | `shot <p> <name> [crop]` | capture to `shots/<name>.png`. A blessed `reference-images/<name>.png` → compared (over tolerance: `REGRESSION`). None → `UNBLESSED` (exit 0); under `--strict-refs` → `NO-REFERENCE` (counts as a failure). A shot used only as a `pair` input is `OK`. |

@@ -198,6 +198,11 @@ _sc_begin() {
     if [ -n "${RIG_SRV:-}" ] && ! kill -0 "$RIG_SRV" 2>/dev/null; then
         _sc_infra "the server (pid $RIG_SRV) died (see server.log)"; return 1
     fi
+    local msg
+    if ! msg=$(_sc_argcheck "$@"); then
+        case $1 in boot|login) _sc_infra "$msg";; *) _sc_row FAIL "" "$msg";; esac
+        return 1
+    fi
     return 0
 }
 # _sc_row <status> <offsets> <detail> — close the current step.
@@ -271,6 +276,116 @@ _sc_poll() {
 }
 _sc_is_num() { [[ $1 =~ ^[0-9]+([.][0-9]+)?$ ]]; }
 _sc_geom_ok() { [ "$1" = FULL ] || [[ $1 =~ ^[0-9]+x[0-9]+\+[0-9]+\+[0-9]+$ ]]; }
+
+# ================================================================================================
+# Argument checks — one table for the run (_sc_begin) and the dry-run/lint, so a malformed verb call
+# fails before a three-minute boot
+# ================================================================================================
+_sc_ac_p() { _sc_known "${1:-}" || { echo "unknown player '${1:-}' (PLAYERS=${SC_PLAYERS[*]})"; return 1; }; }
+_sc_ac_n() { _sc_is_num "${1:-}" || { echo "$2: '${1:-}' is not a number"; return 1; }; }
+_sc_ac_i() { [[ ${1:-} =~ ^-?[0-9]+$ ]] || { echo "$2: '${1:-}' is not an integer"; return 1; }; }
+_sc_ac_g() { _sc_geom_ok "${1:-}" || { echo "$2: '${1:-}' is not WxH+X+Y or FULL"; return 1; }; }
+_sc_ac_e() { [ -n "${1:-}" ] || { echo "$2: no ERE"; return 1; }; }
+_sc_ac_cap() { [ -z "${1:-}" ] || _sc_ac_n "$1" "$2 cap"; }
+# _sc_ac_max <verb text> <argc> <max>
+_sc_ac_max() { [ "$2" -le "$3" ] || { echo "$1: $2 arguments, at most $3 — quote an argument holding spaces, and quote operators ('>=')"; return 1; }; }
+_sc_ac_op() { case ${1:-} in =|==|'!='|'<'|'<='|'>'|'>=') ;; *) echo "assert count: operator '${1:-}' is not one of = == != < <= > >= (quote it: '>=')"; return 1;; esac; }
+# _sc_argcheck <verb> <args>... — echo the first problem with a verb call's arguments; 1 if any.
+_sc_argcheck() {
+    local v=$1 x; shift
+    local -a rest=()
+    case $v in wait|assert)
+        while [ $# -gt 0 ]; do
+            if [ "$1" = --since ]; then [ -n "${2:-}" ] || { echo "--since needs a mark name"; return 1; }; shift 2; continue; fi
+            rest+=("$1"); shift
+        done
+        set -- "${rest[@]+"${rest[@]}"}" ;;
+    esac
+    case $v in
+        boot)   [ $# -gt 0 ] || { echo "boot: name at least one player"; return 1; }
+                for x in "$@"; do _sc_ac_p "$x" || return 1; done ;;
+        login)  _sc_ac_p "${1:-}" || return 1
+                case ${2:-returning} in returning|fresh) ;; *) echo "login: mode '$2' is not returning or fresh"; return 1;; esac
+                _sc_ac_max login $# 2 ;;
+        logout|rmb|cast|hidechat) _sc_ac_p "${1:-}" || return 1; _sc_ac_max "$v" $# 1 ;;
+        wiggle) _sc_ac_max wiggle $# 0 ;;
+        settle) _sc_ac_n "${1:-}" settle || return 1
+                [ -n "${2:-}" ] || { echo 'settle: give the reason: settle <secs> "<reason>"'; return 1; }
+                _sc_ac_max settle $# 2 ;;
+        key)    _sc_ac_p "${1:-}" || return 1; [ $# -ge 2 ] || { echo "key: no keys"; return 1; } ;;
+        hold)   _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "hold: no key"; return 1; }
+                _sc_ac_n "${3:-}" "hold secs" || return 1; _sc_ac_max hold $# 3 ;;
+        type|chat) _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "$v: no text"; return 1; }; _sc_ac_max "$v" $# 2 ;;
+        mouse|click) _sc_ac_p "${1:-}" || return 1
+                [[ ${2:-} =~ ^[0-9]+$ && ${3:-} =~ ^[0-9]+$ ]] || { echo "$v: x y must be screen pixels"; return 1; }
+                _sc_ac_max "$v" $# 3 ;;
+        look)   _sc_ac_p "${1:-}" || return 1; _sc_ac_i "${2:-}" "look dx" || return 1
+                [ -z "${3:-}" ] || _sc_ac_i "$3" "look dy" || return 1; _sc_ac_max look $# 3 ;;
+        turn)   _sc_ac_p "${1:-}" || return 1; _sc_ac_i "${2:-}" "turn dx" || return 1
+                [ -z "${3:-}" ] || [[ $3 =~ ^[0-9]+$ ]] || { echo "turn: steps '$3' is not a count"; return 1; }
+                _sc_ac_max turn $# 3 ;;
+        scroll) _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "scroll: no quick-key"; return 1; }
+                shift 2
+                if [ $# -gt 0 ] && [ "$1" != until ]; then shift; fi      # the close key (or none)
+                if [ $# -gt 0 ]; then
+                    [ $# = 6 ] && [ "$1" = until ] && [ "$2" = server ] && [ -n "$3" ] && _sc_is_num "$4" && [ "$5" = tries ] && [[ $6 =~ ^[0-9]+$ ]] \
+                        || { echo "scroll: expected scroll <p> <quickkey> [<closekey>|none] [until server <ERE> <cap> tries <n>]"; return 1; }
+                fi ;;
+        console|server) _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "$v: no command"; return 1; }; _sc_ac_max "$v" $# 2 ;;
+        console-file) _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "console-file: no file"; return 1; }
+                [ -f "$SC_DIR/$2" ] || { echo "console-file: no file $2 in the scenario dir"; return 1; }
+                _sc_ac_max console-file $# 2 ;;
+        console-object) _sc_ac_p "${1:-}" || return 1
+                [ $# = 4 ] || { echo "console-object: expected <p> \"<cell>\" <refnum-mpnum> \"<cmd>\""; return 1; } ;;
+        save)   if [ "${1:-}" = cell ]; then [ -n "${2:-}" ] || { echo "save cell: no cell"; return 1; }; _sc_ac_max save $# 2
+                else _sc_ac_p "${1:-}" || return 1; _sc_ac_max save $# 1; fi ;;
+        probe)  _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "probe: no kind"; return 1; }; _sc_ac_max probe $# 2 ;;
+        wait)   case ${1:-} in
+                    server) _sc_ac_e "${2:-}" "wait server" || return 1; _sc_ac_cap "${3:-}" "wait server" || return 1; _sc_ac_max "wait server" $# 3 ;;
+                    client) _sc_ac_p "${2:-}" || return 1; _sc_ac_e "${3:-}" "wait client" || return 1
+                            _sc_ac_cap "${4:-}" "wait client" || return 1; _sc_ac_max "wait client" $# 4 ;;
+                    probe)  _sc_ac_p "${2:-}" || return 1 ;;
+                    stable) _sc_ac_p "${2:-}" || return 1; [ -z "${3:-}" ] || _sc_ac_g "$3" "wait stable" || return 1
+                            for x in "${@:4}"; do _sc_ac_n "$x" "wait stable" || return 1; done
+                            _sc_ac_max "wait stable" $# 6 ;;
+                    *) echo "wait: expected server|client|probe|stable, got '${1:-}'"; return 1 ;;
+                esac ;;
+        assert) case ${1:-} in
+                    server) _sc_ac_e "${2:-}" "assert server" || return 1; _sc_ac_cap "${3:-}" "assert server" || return 1; _sc_ac_max "assert server" $# 3 ;;
+                    client) _sc_ac_p "${2:-}" || return 1; _sc_ac_e "${3:-}" "assert client" || return 1
+                            _sc_ac_cap "${4:-}" "assert client" || return 1; _sc_ac_max "assert client" $# 4 ;;
+                    absent) case ${2:-} in
+                                server) _sc_ac_e "${3:-}" "assert absent" || return 1; _sc_ac_max "assert absent server" $# 3 ;;
+                                client) _sc_ac_p "${3:-}" || return 1; _sc_ac_e "${4:-}" "assert absent" || return 1; _sc_ac_max "assert absent client" $# 4 ;;
+                                *) echo "assert absent: expected server|client <p>"; return 1 ;;
+                            esac ;;
+                    count)  case ${2:-} in
+                                server) shift 2 ;;
+                                client) _sc_ac_p "${3:-}" || return 1; shift 3 ;;
+                                *) echo "assert count: expected 'assert count server|client <p> <fixed> <op> <n>'"; return 1 ;;
+                            esac
+                            [ $# = 3 ] || { echo "assert count: expected <fixed> <op> <n> after the log, got $# argument(s) (quote the operator: '>=')"; return 1; }
+                            _sc_ac_op "$2" || return 1
+                            [[ $3 =~ ^[0-9]+$ ]] || { echo "assert count: <n> '$3' is not a count"; return 1; } ;;
+                    probe|probe-delta) _sc_ac_p "${2:-}" || return 1 ;;
+                    json)   [ -n "${2:-}" ] && [ -n "${3:-}" ] || { echo "assert json: expected <relpath> '<python expression>'"; return 1; }
+                            _sc_ac_max "assert json" $# 3 ;;
+                    *) echo "assert: expected server|client|absent|count|probe|probe-delta|json, got '${1:-}'"; return 1 ;;
+                esac ;;
+        shot)   _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "shot: no name"; return 1; }
+                [ -z "${3:-}" ] || _sc_ac_g "$3" "shot crop" || return 1; _sc_ac_max shot $# 3 ;;
+        pair)   [ -n "${1:-}" ] && [ -n "${2:-}" ] && [ -n "${3:-}" ] || { echo "pair: expected <name> <A> <B> [metric] [floor]"; return 1; }
+                [ -z "${5:-}" ] || _sc_ac_n "$5" "pair floor" || return 1; _sc_ac_max pair $# 5 ;;
+        signature) _sc_ac_max signature $# 1 ;;
+        checkpoint) [ -n "${1:-}" ] || { echo "checkpoint: no name"; return 1; }
+                case ${2:-} in ''|sp|mp-only) ;; *) echo "checkpoint: mode '$2' is not sp or mp-only"; return 1;; esac
+                case ${3:-} in ''|divergent) ;; *) echo "checkpoint: third argument must be 'divergent'"; return 1;; esac
+                _sc_ac_max checkpoint $# 3 ;;
+        mark)   [ "${1:-}" != start ] || { echo "mark: 'start' is predefined"; return 1; }; _sc_ac_max mark $# 1 ;;
+        artifact) [ -n "${1:-}" ] || { echo "artifact: no file"; return 1; }; _sc_ac_max artifact $# 2 ;;
+        *)      return 0 ;;
+    esac
+}
 
 # ================================================================================================
 # Players
@@ -467,24 +582,22 @@ _scv_turn()  { _sc_begin turn "$@" || return 0
 _scv_chat()  { _sc_begin chat "$@" || return 0; _sc_input "${1:-}" rig_chat_command "$(_sc_disp_safe "${1:-}")" "${2:-}"; }
 _scv_cast()  { _sc_begin cast "$@" || return 0; _sc_input "${1:-}" _sc_hold_button "$(_sc_disp_safe "${1:-}")" 1 0.25; }
 _sc_disp_safe() { if _sc_known "${1:-}"; then _sc_disp "$1"; fi; }
-# scroll <p> <quickkey> [until server <ERE> <cap> tries <n>] — quick-key, space (close the read
-# parchment), cast; with `until`, repeat until the server logs the ERE (KB-2).
+# scroll <p> <quickkey> [<closekey>|none] [until server <ERE> <cap> tries <n>] — read a scroll bound to
+# a quick-key: the quick-key, the close key (default space: closes the read parchment; `none` in
+# combat, where no parchment opens), a cast; with `until`, repeat until the server logs the ERE (KB-2).
 _scv_scroll() {
     _sc_begin scroll "$@" || return 0
-    local p=${1:-} qk=${2:-} re='' cap=8 tries=1 i disp start
-    [ -n "$qk" ] || { _sc_row FAIL "" "scroll: no quick-key"; return 1; }
-    if [ $# -gt 2 ]; then
-        [ "${3:-}" = until ] && [ "${4:-}" = server ] && [ -n "${5:-}" ] && _sc_is_num "${6:-}" && [ "${7:-}" = tries ] && [[ ${8:-} =~ ^[0-9]+$ ]] \
-            || { _sc_row FAIL "" "scroll: expected: scroll <p> <quickkey> until server <ERE> <cap> tries <n>"; return 1; }
-        re=$5; cap=$6; tries=$8
-    fi
+    local p=${1:-} qk=${2:-} close=space re='' cap=8 tries=1 i disp start
+    shift 2
+    if [ $# -gt 0 ] && [ "$1" != until ]; then close=$1; shift; fi
+    if [ $# -gt 0 ]; then re=$3; cap=$4; tries=$6; fi
     _sc_need_client "$p" || return 1
     disp=$(_sc_disp "$p"); _sc_baseline "$p"
     _sc_mark_all
     start=$(_sc_size "$(_sc_logfile server)")
     for ((i=1; i<=tries; i++)); do
         rig_key "$disp" "$qk"; sleep 2
-        rig_key "$disp" space; sleep 1
+        [ "$close" != none ] && { rig_key "$disp" "$close"; sleep 1; }
         _sc_hold_button "$disp" 1 0.25
         [ -z "$re" ] && { _sc_close_row OK ""; return 0; }
         if _sc_poll "$cap" _sc_grep_from "$(_sc_logfile server)" "$start" "$re"; then
@@ -623,15 +736,15 @@ _scv_assert() {
             local hit; hit=$(grep -nE -- "$re" "$file" 2>/dev/null | head -1)
             if [ -n "$hit" ]; then _sc_row FAIL "$p:0-$(_sc_size "$file")" "found /$re/ at ${file##*/}:${hit:0:200}"
             else _sc_row PASS "$p:0-$(_sc_size "$file")" "no /$re/ in ${file##*/}"; fi ;;
-        count)
-            [ "${2:-}" = server ] || { _sc_row FAIL "" "assert count: expected 'assert count server <fixed> <op> <n>'"; return 1; }
-            [[ ${5:-x} =~ ^[0-9]+$ ]] || { _sc_row FAIL "" "assert count: <n> must be a count"; return 1; }
-            file=$(_sc_logfile server)
-            c=$(grep -cF -- "${3:-}" "$file" 2>/dev/null); c=${c:-0}
-            _sc_cmp "$c" "${4:-}" "$5"; local rc=$?
-            if [ "$rc" = 2 ]; then _sc_row FAIL "" "assert count: unknown op '${4:-}' (= == != < <= > >=)"
-            elif [ "$rc" = 0 ]; then _sc_row PASS "server:0-$(_sc_size "$file")" "count('${3:-}')=$c ${4} $5"
-            else _sc_row FAIL "server:0-$(_sc_size "$file")" "count('${3:-}')=$c, wanted ${4} $5"; fi ;;
+        count)      # assert count server <fixed> <op> <n> | assert count client <p> <fixed> <op> <n>
+            local k=server
+            if [ "${2:-}" = client ]; then k=${3:-}; shift 3; else shift 2; fi
+            file=$(_sc_logfile "$k")
+            c=$(grep -cF -- "${1:-}" "$file" 2>/dev/null); c=${c:-0}
+            _sc_cmp "$c" "${2:-}" "${3:-0}"; local rc=$?
+            if [ "$rc" = 2 ]; then _sc_row FAIL "" "assert count: unknown op '${2:-}' (= == != < <= > >=)"
+            elif [ "$rc" = 0 ]; then _sc_row PASS "$k:0-$(_sc_size "$file")" "count('${1:-}')=$c $2 $3 in ${file##*/}"
+            else _sc_row FAIL "$k:0-$(_sc_size "$file")" "count('${1:-}')=$c in ${file##*/}, wanted $2 $3"; fi ;;
         probe|probe-delta) _sc_row SKIP "" "probe: not available" ;;
         json) _sc_assert_json "${2:-}" "${3:-}" ;;
         *) _sc_row FAIL "" "assert: expected server|client|absent|count|probe|probe-delta|json, got '$kind'"; return 1 ;;
@@ -953,18 +1066,21 @@ _sc_write_env() {
 # ================================================================================================
 # --dry-run: conf check, bash -n, steps.sh with stubbed verbs and an empty PATH
 # ================================================================================================
-SC_DRY_OFF=''
-_sc_dry_check() {   # light argument checks while dry-running; problems become FAIL rows
-    local v=$1; shift
-    local p=''
+SC_DRY_OFF='' SC_DRY_CWD=''
+declare -A SC_DRY_MARKS=()
+_sc_dry_check() {   # dry-run: the shared argument checks, plus --since names a mark set earlier
+    local v=$1 msg a prev=''
+    if ! msg=$(_sc_argcheck "$@"); then _sc_row FAIL "" "$msg"; return; fi
     case $v in
-        key|hold|type|mouse|click|rmb|look|turn|chat|cast|scroll|hidechat|login|logout|shot|console|console-file|console-object|save|probe) p=${1:-} ;;
-        boot) for p in "$@"; do _sc_known "$p" || { _sc_row FAIL "" "unknown player '$p'"; return; }; done; p='' ;;
-        wait|assert) [ "${1:-}" = client ] && p=${2:-}; [ "${1:-}" = absent ] && [ "${2:-}" = client ] && p=${3:-} ;;
-        settle) [ -n "${2:-}" ] || { _sc_row OK "" "dry-run; warning: settle without a reason"; return; } ;;
+        wait|assert)
+            for a in "${@:2}"; do
+                if [ "$prev" = --since ] && [ "$a" != start ] && [ -z "${SC_DRY_MARKS[$a]:-}" ]; then
+                    _sc_row FAIL "" "--since $a: no earlier 'mark $a' in steps.sh"; return
+                fi
+                prev=$a
+            done ;;
+        mark) [ -n "${2:-}" ] && SC_DRY_MARKS[$2]=1 ;;
     esac
-    if [ "$v" = save ] && [ "$p" = cell ]; then p=''; fi
-    if [ -n "$p" ] && ! _sc_known "$p"; then _sc_row FAIL "" "unknown player '$p' (PLAYERS=${SC_PLAYERS[*]})"; return; fi
     _sc_row OK "" "dry-run"
 }
 _sc_dry_run() {
@@ -987,12 +1103,21 @@ _sc_dry_run() {
     eval()   { printf '%s\t%s\n' "$(_sc_callsite)" eval   >> "$SC_DRY_OFF"; }
     exec()   { printf '%s\t%s\n' "$(_sc_callsite)" exec   >> "$SC_DRY_OFF"; }
     source() { printf '%s\t%s\n' "$(_sc_callsite)" source >> "$SC_DRY_OFF"; }
-    local savepath=$PATH
+    local savepath=$PATH savecwd=$PWD
+    # steps.sh runs in an empty directory: a file appearing there is an unquoted redirection.
+    SC_DRY_CWD=$(mktemp -d); builtin cd "$SC_DRY_CWD" || return 1
+    # Under set -u an unset variable ends this process inside steps.sh; say what that means.
+    trap '[ "$SC_PHASE" = steps ] && echo "FAIL steps.sh aborted: an unset variable (steps.sh runs under set -u; see the bash message above)"; rm -rf "$SC_DRY_CWD" "$SC_DRY_OFF"' EXIT
     # shellcheck disable=SC2123  # emptying the search path is the point
     PATH=/nonexistent-rig-dry-run     # an empty PATH would search the current directory
     _sc_run_steps || rc=$?
     PATH=$savepath
     unset -f command_not_found_handle eval exec source
+    if [ -n "$(ls -A "$SC_DRY_CWD")" ]; then
+        echo "FAIL steps.sh wrote $(ls -A "$SC_DRY_CWD" | sed "s/.*/'&'/" | tr '\n' ' ')in its working directory: an unquoted > or < (quote operators: assert count server 'x' '>=' 2)"
+        bad=1
+    fi
+    builtin cd "$savecwd" || true
     while IFS=$'\t' read -r line msg; do
         echo "FAIL $line: '$msg' is not a verb (external commands, eval, exec and source are not allowed in steps.sh)"; bad=1
     done < "$SC_DRY_OFF"
@@ -1185,6 +1310,8 @@ EOF
     assert count server 'before the mark' '>=' 1 >/dev/null; _check "count: whole log" "$SC_LAST_STATUS" PASS
     assert count server '[INFO]' '=' 3 >/dev/null;    _check "count: fixed string, ==" "$SC_LAST_STATUS" PASS
     assert count server 'beta' '<' 1 >/dev/null;      _check "count: failing comparison" "$SC_LAST_STATUS" FAIL
+    assert count client a 'hello' '=' 1 >/dev/null;   _check "count: client log" "$SC_LAST_STATUS" PASS
+    assert count server 'beta' 1 >/dev/null;          _check "count: missing operator fails" "$SC_LAST_STATUS" FAIL
     assert absent server 'alpha' >/dev/null;          _check "absent: whole log (pre-mark line found)" "$SC_LAST_STATUS" FAIL
     assert absent server 'delta' >/dev/null;          _check "absent: no line" "$SC_LAST_STATUS" PASS
     assert client a 'hello' 0 >/dev/null;             _check "client: before the mark" "$SC_LAST_STATUS" FAIL
@@ -1232,7 +1359,7 @@ EOF
     # -- 5. verdict: FAIL counted, pair inputs need no reference, INFRA stops the rest --
     SC_ATTEMPT=1; SC_STRICT=1
     _sc_finalize >/dev/null
-    _check "verdict: failed assertions -> FAIL" "$(cat "$SC_RUN/RESULT")" "$(_sc_result_line FAIL 1 selftest 11 0 1)"
+    _check "verdict: failed assertions -> FAIL" "$(cat "$SC_RUN/RESULT")" "$(_sc_result_line FAIL 1 selftest 12 0 1)"
     SC_RUN=$t/run2; mkdir -p "$SC_RUN"; SC_RSTAT=(); SC_STEP=0; SC_FINAL=0; SC_SHOTROW=(); SC_PAIRIN=()
     SC_CUR_STEP=1; SC_STEP=1; SC_CUR_LINE=steps.sh:1; SC_CUR_DESC="shot a 10"; SC_SHOTROW[10]=1; _sc_row NO-REFERENCE "" "x" >/dev/null
     SC_CUR_STEP=2; SC_STEP=2; SC_CUR_LINE=steps.sh:2; SC_CUR_DESC="shot a 20"; SC_SHOTROW[20]=2; _sc_row NO-REFERENCE "" "x" >/dev/null
@@ -1281,6 +1408,21 @@ EOF
     else _bad "dry-run: external command rejected" "rc=$rc $out"; fi
     printf 'boot a\nlogin a\nassert server ok\n' > "$t/s4/steps.sh"
     if bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" >/dev/null 2>&1; then _ok "dry-run: clean steps pass"; else _bad "dry-run: clean steps pass"; fi
+    local case want
+    for case in "assert count server x >= 2|wrote '='" "shot a s1 12x12|is not WxH+X+Y" "settle 3|give the reason" \
+                "assert server ok --since m9|no earlier 'mark m9'" "wait --since m client zz foo|unknown player 'zz'" \
+                "assert server|no ERE" "assert json player/a.json d[0] == 1|at most 3" "scroll a 1 until server x|scroll: expected" \
+                "echo \$P_TYPO|unset variable"; do
+        want=${case#*|}
+        printf 'boot a\n%s\n' "${case%%|*}" > "$t/s4/steps.sh"
+        out=$(cd "$t" && bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" 2>&1); rc=$?
+        if [ "$rc" != 0 ] && grep -qF -- "$want" <<<"$out"; then _ok "dry-run rejects: ${case%%|*}"
+        else _bad "dry-run rejects: ${case%%|*}" "rc=$rc $(tail -3 <<<"$out")"; fi
+    done
+    [ -e "$t/=" ] && _bad "dry-run: redirection escaped the scratch cwd"
+    printf 'boot a\nmark m1\nscroll a 1 none until server x 5 tries 2\nassert server --since m1 ok\nsettle 1 "why"\n' > "$t/s4/steps.sh"
+    if bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" >/dev/null 2>&1; then _ok "dry-run: known mark, scroll close key, settle reason"
+    else _bad "dry-run: known mark, scroll close key, settle reason"; fi
 
     rm -rf "$t"
     echo "selftest done (fails=$fails)"
