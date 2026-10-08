@@ -476,7 +476,7 @@ rig_start_server() {
 
 # _rig_resolve_profile <n> — give client n's profile variable (RIG_PROFILE, RIG_PROFILE2, RIG_PROFILE3) its
 # default unless it was set to something else: <run dir>/profiles/client<n> when a run dir exists (so the
-# client's own openmw.log stays with the run), else /tmp/mp-rig-profile<n>. Re-resolved while the value
+# cfg a client booted with and its MyGUI.log stay with the run), else /tmp/mp-rig-profile<n>. Re-resolved while the value
 # is the last default, so a run dir created later still gets the profiles.
 _RIG_PROFILE_AUTO=('' '' '' '')
 _rig_resolve_profile() {
