@@ -845,6 +845,7 @@ _sc_probe_usable() {
     local p=$1
     SC_PROBE_WHY=''
     if [ "${PROBE:-0}" != 1 ]; then SC_PROBE_WHY=${SC_PROBE_OFF_WHY:-"probe: off (PROBE=1 in scenario.conf loads it)"}; return 1; fi
+    _sc_fresh "$(_sc_logfile "probe-$p")"      # the probe log lags the client log until it is synced
     if ! grep -aq '^\[rigprobe:ready\]' "$(_sc_logfile "probe-$p")" 2>/dev/null; then
         SC_PROBE_WHY="probe: client $p never logged [rigprobe:ready] (a client without OpenMW Lua player scripts, or the probe failed to load: see client-$p.log)"
         return 1
@@ -854,6 +855,7 @@ _sc_probe_usable() {
 # _sc_probe_caps <p> — the caps= list of the client's last ready line.
 _sc_probe_caps() {
     local line
+    _sc_fresh "$(_sc_logfile "probe-$1")"
     line=$(grep -a '^\[rigprobe:ready\]' "$(_sc_logfile "probe-$1")" 2>/dev/null | tail -1)
     _sc_probe_tokens "$line" 2>/dev/null | sed -n 's/^caps=//p'
 }
@@ -1997,6 +1999,11 @@ scenario_selftest_probe() {
     printf '%s[rigprobe:stats] p=a t=7 seq=0 hp=4\n' "$pre" >> "$SC_RUN/client-a.log"
     wait probe a 'rigprobe:stats\] .*hp=4' 1 >/dev/null; _check "wait probe: a line after the mark" "$SC_LAST_STATUS" PASS
     wait probe a 'rigprobe:stats\] .*hp=5' 0 >/dev/null; _check "wait probe: a line before the mark" "$SC_LAST_STATUS" FAIL
+
+    # A ready line that reached only the client log (no sync since) still makes the probe usable.
+    printf '%s[rigprobe:ready] p=b t=1 seq=0 probe=1 version=1 caps=cell,stats\n' "$pre" > "$SC_RUN/client-b.log"
+    rm -f "$SC_RUN/probe-b.log" "$SC_RUN/.probe-b.off"
+    if _sc_probe_usable b; then _ok "probe: usable reads a fresh probe log"; else _bad "probe: usable reads a fresh probe log" "$SC_PROBE_WHY"; fi
 
     # The fake bridge: answers cmd-<seq>.meta in seq order.
     dir=$SC_RUN/bridge
