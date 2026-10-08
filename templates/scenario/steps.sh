@@ -12,6 +12,7 @@
 #            look <p> <dx> <dy>          turn <p> <dx> <steps>    chat <p> "/cmd"   hidechat <p>
 #            scroll <p> <quickkey> [<closekey>|none] [until server <ERE> <cap> tries <n>]
 # Setup      console <p> "<mwscript>"    console-file <p> setup/<f>.console     server <p> "<lua>"
+#            server-file <p> setup/<f>.lua   (a multi-line chunk; $P_<NAME> in it is replaced)
 #            console-object <p> "<cell>" <refnum>-<mpnum> "<mwscript>"     save <p> | save cell "<cell>"
 #            (pushed by the server to a logged-in player; no bridge answer stops the run as INFRA)
 # Probe      probe <p> <cell|stats|quest|topics|inv|nearby|items|effects|faction|spells|time|weather|dump>
@@ -20,6 +21,7 @@
 #            assert probe-delta <p> <kind> <field> <op> <n> [<cond>...]   (the last two requests)
 #            assert probe-count <p> <kind> <op> <n> [<cond>...]           (= 0 absent, = 1 exactly one)
 # Waits      wait server <ERE> [cap]     wait client <p> <ERE> [cap]     wait probe <p> <ERE> [cap]
+#            wait probe <p> <kind> <cond>... [cap]   (re-request the kind until one line meets every cond)
 #            wait stable <p> <crop|FULL> [cap]
 # Asserts    assert server <ERE> [cap]   assert client <p> <ERE> [cap]   (log past the last mark)
 #            assert absent server|client <p> <ERE>                       (whole log)

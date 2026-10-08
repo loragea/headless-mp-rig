@@ -38,6 +38,7 @@ RIG_LOGIN_CAP=${RIG_LOGIN_CAP:-30}                # login: secs to see the serve
 RIG_CHAT_KEY=${RIG_CHAT_KEY:-F6}                  # hidechat: the client's chat-window toggle key
 RIG_BRIDGE_CAP=${RIG_BRIDGE_CAP:-5}               # setup verbs: secs for the server bridge to answer a command
 RIG_PROBE_CAP=${RIG_PROBE_CAP:-10}                # probe: secs for the client probe's [rigprobe:done] after the bridge sent it
+RIG_PROBE_POLL=${RIG_PROBE_POLL:-1}               # wait probe <p> <kind> <cond>...: secs between two requests
 RIG_SCENARIOS=${RIG_SCENARIOS:-$RIG_ROOT/scenarios}   # --tag/--all search roots (space-separated)
 
 SC_DEFAULT_MARKERS=$LOG_MARKERS     # logcheck.sh's vocabulary, used when LOG_MARKERS is not set
@@ -45,7 +46,7 @@ SC_DEFAULT_MARKERS=$LOG_MARKERS     # logcheck.sh's vocabulary, used when LOG_MA
 SC_PROBE_KINDS="cell stats quest topics inv nearby items effects faction spells time weather"
 SC_CONF_KEYS="NAME PURPOSE PLAYERS PASSWORDS TAGS CONTENT FIXTURE OVERLAY PROBE PROBE_RANGE PROBE_PERIOD SETTINGS LOG_MARKERS COST WIGGLE"
 SC_VERBS="boot login logout wiggle settle key hold type mouse click rmb look turn chat cast scroll hidechat
-console console-file console-object server save probe wait assert shot pair signature checkpoint mark note artifact"
+console console-file console-object server server-file save probe wait assert shot pair signature checkpoint mark note artifact"
 
 # ================================================================================================
 # scenario.conf — parsed without running it (discovery, checks); sourced only by a run
@@ -341,6 +342,44 @@ _sc_ac_console_file() {
     done < "$1"
     return 0
 }
+# _sc_lua_text <path> — the file's text with every $P_<NAME> / ${P_<NAME>} replaced by the parameter's
+# value; 1 (message on stdout) when a parameter is not set.
+_sc_lua_text() {
+    local rest out='' re='\$(\{P_[A-Z0-9_]+\}|P_[A-Z0-9_]+)' tok name
+    [ -r "$1" ] || { echo "${1##*/}: cannot read it"; return 1; }
+    rest=$(<"$1")
+    while [[ $rest =~ $re ]]; do
+        tok=${BASH_REMATCH[0]}; name=${BASH_REMATCH[1]#\{}; name=${name%\}}
+        [ -n "${!name+x}" ] || { echo "${1##*/}: \$$name is not a parameter of this scenario (scenario.conf P_*)"; return 1; }
+        out+=${rest%%"$tok"*}${!name}; rest=${rest#*"$tok"}
+    done
+    printf '%s%s\n' "$out" "$rest"
+}
+# _sc_luac — the Lua 5.1 syntax checker this box has (luac5.1, luajit or luac), empty when none.
+# Resolved once, before a dry-run empties PATH.
+SC_LUAC=''
+_sc_luac_find() {
+    if command -v luac5.1 >/dev/null 2>&1; then SC_LUAC="$(command -v luac5.1) -p"
+    elif command -v luajit >/dev/null 2>&1; then SC_LUAC="$(command -v luajit) -bl"
+    elif command -v luac >/dev/null 2>&1; then SC_LUAC="$(command -v luac) -p"; fi
+    return 0
+}
+_sc_luac_find
+# _sc_ac_lua_file <path> <name> — the chunk's parameters are set and, when a Lua compiler is installed,
+# it parses.
+_sc_ac_lua_file() {
+    local text out
+    text=$(_sc_lua_text "$1") || { echo "server-file $text"; return 1; }
+    [ -n "$SC_LUAC" ] || return 0
+    out=$($SC_LUAC - <<<"$text" 2>&1 >/dev/null) || { echo "server-file $2: Lua syntax: ${out//$'\n'/ }"; return 1; }
+    return 0
+}
+# _sc_wait_probe_is_state <arg3>... — `wait probe <p> <kind> <cond>... [cap]` (a kind, then a
+# condition) rather than `wait probe <p> <ERE> [cap]`.
+_sc_wait_probe_is_state() {
+    case " $SC_PROBE_KINDS dump " in *" ${1:-} "*) [ -n "${1:-}" ] || return 1;; *) return 1;; esac
+    [ $# -ge 2 ] && _sc_probe_cond_parse "$2"
+}
 # _sc_ac_kind <kind> <verb> [extra] — a probe kind the probe answers.
 _sc_ac_kind() {
     case " $SC_PROBE_KINDS ${3:-} " in *" ${1:-} "*) [ -n "${1:-}" ] && return 0;; esac
@@ -410,6 +449,10 @@ _sc_argcheck() {
         console|server) _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "$v: no command"; return 1; }
                 [ "$v" = server ] || _sc_ac_line "${2:-}" console || return 1
                 _sc_ac_max "$v" $# 2 ;;
+        server-file) _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "server-file: no file"; return 1; }
+                [ -f "$SC_DIR/$2" ] || { echo "server-file: no file $2 in the scenario dir"; return 1; }
+                _sc_ac_max server-file $# 2 || return 1
+                _sc_ac_lua_file "$SC_DIR/$2" "$2" ;;
         console-file) _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "console-file: no file"; return 1; }
                 [ -f "$SC_DIR/$2" ] || { echo "console-file: no file $2 in the scenario dir"; return 1; }
                 _sc_ac_max console-file $# 2 || return 1
@@ -426,8 +469,16 @@ _sc_argcheck() {
                     server) _sc_ac_e "${2:-}" "wait server" || return 1; _sc_ac_cap "${3:-}" "wait server" || return 1; _sc_ac_max "wait server" $# 3 ;;
                     client) _sc_ac_p "${2:-}" || return 1; _sc_ac_e "${3:-}" "wait client" || return 1
                             _sc_ac_cap "${4:-}" "wait client" || return 1; _sc_ac_max "wait client" $# 4 ;;
-                    probe)  _sc_ac_p "${2:-}" || return 1; _sc_ac_e "${3:-}" "wait probe" || return 1
-                            _sc_ac_cap "${4:-}" "wait probe" || return 1; _sc_ac_max "wait probe" $# 4 ;;
+                    probe)  _sc_ac_p "${2:-}" || return 1
+                            if _sc_wait_probe_is_state "${@:3}"; then
+                                _sc_ac_kind "$3" "wait probe" || return 1
+                                shift 3
+                                [ $# -gt 1 ] && _sc_is_num "${*: -1}" && set -- "${@:1:$#-1}"
+                                for x in "$@"; do _sc_ac_cond "$x" || return 1; done
+                            else
+                                _sc_ac_e "${3:-}" "wait probe" || return 1
+                                _sc_ac_cap "${4:-}" "wait probe" || return 1; _sc_ac_max "wait probe" $# 4
+                            fi ;;
                     stable) _sc_ac_p "${2:-}" || return 1; [ -z "${3:-}" ] || _sc_ac_g "$3" "wait stable" || return 1
                             for x in "${@:4}"; do _sc_ac_n "$x" "wait stable" || return 1; done
                             _sc_ac_max "wait stable" $# 6 ;;
@@ -801,6 +852,15 @@ _scv_server() {
     _sc_mark_all
     _sc_bridge_row lua "$1" --body "${2:-}"
 }
+# server-file <p> setup/<f>.lua — the file's text, parameters substituted, as one `server` chunk.
+_scv_server_file() {
+    _sc_begin server-file "$@" || return 0
+    local text
+    _sc_setup_ready "${1:-}" || return 1
+    text=$(_sc_lua_text "$SC_DIR/${2:-}") || { _sc_row FAIL "" "server-file $text"; return 1; }
+    _sc_mark_all
+    _sc_bridge_row lua "$1" --body "$text"
+}
 _scv_save() {
     _sc_begin save "$@" || return 0
     if [ "${1:-}" = cell ]; then
@@ -1120,12 +1180,47 @@ _scv_wait() {
                 [ -n "${3:-}" ] || { _sc_row FAIL "" "wait client: no ERE"; return 1; }
                 _sc_window_match "$p" "$3" "${4:-10}" FAIL ;;
         probe)  p=${2:-}; _sc_known "$p" || { _sc_row FAIL "" "wait probe: unknown player '$p'"; return 1; }
+                if _sc_wait_probe_is_state "${@:3}"; then _sc_wait_probe_state "${@:2}"; return; fi
                 [ -n "${3:-}" ] || { _sc_row FAIL "" "wait probe: no ERE"; return 1; }
                 _sc_probe_usable "$p" || { _sc_row SKIP "" "$SC_PROBE_WHY"; return 0; }
                 _sc_window_match "probe-$p" "$3" "${4:-10}" FAIL ;;
         stable) _sc_wait_stable "${@:2}" ;;
         *)      _sc_row FAIL "" "wait: expected server|client|probe|stable, got '$src'"; return 1 ;;
     esac
+}
+# wait probe <p> <kind> <cond>... [cap] — request <kind> every RIG_PROBE_POLL secs until one line of a
+# request meets every condition (PASS, naming the line) or cap secs (default 10) pass (FAIL quoting the
+# last request). Every request is an ordinary one: a later `assert probe` reads the one that passed.
+# A client that misses one request is asked again; a refused or unanswered bridge command ends the wait.
+_sc_wait_probe_state() {
+    local p=$1 kind=$2 cap=10 c line lines='' last='' n=0 rc t0=$SECONDS
+    shift 2
+    local -a conds=("$@") fields=()
+    if [ ${#conds[@]} -gt 1 ] && _sc_is_num "${conds[-1]}"; then cap=${conds[-1]}; unset 'conds[-1]'; fi
+    for c in "${conds[@]}"; do _sc_probe_cond_parse "$c" && fields+=("$SC_C_FIELD"); done
+    _sc_need_client "$p" || return 1
+    _sc_probe_precheck "$p" "$kind" "${fields[@]+"${fields[@]}"}" || return 0
+    _sc_setup_ready "$p" || return 1
+    while :; do
+        n=$((n + 1)); rc=0
+        _sc_probe_request "$p" "$kind" || rc=$?
+        case $rc in
+            0) lines=$(_sc_probe_lines "$p" "$kind" "$SC_PROBE_SEQ"); last=$SC_PROBE_SEQ
+               while IFS= read -r line; do
+                   [ -n "$line" ] || continue
+                   if _sc_probe_line_ok "$line" "${conds[@]}"; then
+                       _sc_row PASS "" "seq $SC_PROBE_SEQ (request $n, $((SECONDS - t0))s): ${line:0:300}"; return 0
+                   fi
+               done <<<"$lines" ;;
+            1) _sc_row FAIL "" "wait probe $p $kind: bridge $SC_PROBE_SEQ refused: $SC_BRIDGE_REPLY"; return 1 ;;
+            2) _sc_bridge_timeout; return 1 ;;
+        esac
+        (( SECONDS - t0 >= ${cap%.*} )) && break
+        sleep "$RIG_PROBE_POLL"
+    done
+    if [ -z "$last" ]; then _sc_row FAIL "" "no $kind line with ${conds[*]} within ${cap}s: none of $n request(s) was answered (see client-$p.log)"
+    elif [ -z "$lines" ]; then _sc_row FAIL "" "no $kind line with ${conds[*]} within ${cap}s ($n request(s)); the last answered request (seq $last) had no $kind lines"
+    else _sc_row FAIL "" "no $kind line with ${conds[*]} within ${cap}s ($n request(s)); last answered seq $last: $(_sc_probe_quote "$lines")"; fi
 }
 # wait stable <p> <crop|FULL> [cap] [eps] [delta] — KB-15; baseline = the grab before p's last input.
 _sc_wait_stable() {
@@ -1947,7 +2042,7 @@ EOF
     fi
 
     # -- 8. dry-run: an external command in steps.sh is reported --
-    mkdir -p "$t/s4"; printf 'PLAYERS=a\nCONTENT=example\n' > "$t/s4/scenario.conf"
+    mkdir -p "$t/s4"; printf 'PLAYERS=a\nCONTENT=example\nP_N=3\n' > "$t/s4/scenario.conf"
     printf 'boot a\nlogin a\ngrep x y\nassert server ok\n' > "$t/s4/steps.sh"
     out=$(bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" 2>&1); rc=$?
     if [ "$rc" = 1 ] && grep -q "steps.sh:3: 'grep' is not a verb" <<<"$out"; then _ok "dry-run: external command rejected with its line"
@@ -1956,13 +2051,17 @@ EOF
     if bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" >/dev/null 2>&1; then _ok "dry-run: clean steps pass"; else _bad "dry-run: clean steps pass"; fi
     local case want
     mkdir -p "$t/s4/setup"; printf '# ok\nset x to 1\nset y to 2\t; trailing\n' > "$t/s4/setup/tab.console"
+    printf -- '-- two lines\nlocal n = $P_N\nreturn n + ${P_N}\n' > "$t/s4/setup/ok.lua"
+    printf 'return $P_NOPE\n' > "$t/s4/setup/noparam.lua"
     for case in "assert count server x >= 2|wrote '='" "shot a s1 12x12|is not WxH+X+Y" "settle 3|give the reason" \
                 "assert server ok --since m9|no earlier 'mark m9'" "wait --since m client zz foo|unknown player 'zz'" \
                 "assert server|no ERE" "assert json player/a.json d[0] == 1|at most 3" "scroll a 1 until server x|scroll: expected" \
                 "echo \$P_TYPO|unset variable" "probe a bogus|not a probe kind" "assert probe a nearby|expected <p> <kind>" \
                 "assert probe a nearby dist<400|unquoted < or >" "assert probe-delta a stats fat x 1|operator 'x'" \
                 "assert probe-delta a stats fat '<' 0 7|two request seqs" "console-object a cell 12 disable|not <refnum>-<mpnum>" \
-                "wait probe a|no ERE" "assert probe-count a nearby 1|operator '1'" "assert probe-count a nearby = x|is not a count" "console-file a setup/tab.console|tab.console:3: the command holds a tab"; do
+                "wait probe a|no ERE" "assert probe-count a nearby 1|operator '1'" "assert probe-count a nearby = x|is not a count" "console-file a setup/tab.console|tab.console:3: the command holds a tab" \
+                "server-file a setup/none.lua|no file setup/none.lua" "server-file a setup/noparam.lua|\$P_NOPE is not a parameter" \
+                "wait probe a nearby actor=b bogus|'bogus' is not <field><op><value>" "wait probe a dump actor=b|not a probe kind"; do
         want=${case#*|}
         printf 'boot a\n%s\n' "${case%%|*}" > "$t/s4/steps.sh"
         out=$(cd "$t" && bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" 2>&1); rc=$?
@@ -1970,9 +2069,18 @@ EOF
         else _bad "dry-run rejects: ${case%%|*}" "rc=$rc $(tail -3 <<<"$out")"; fi
     done
     [ -e "$t/=" ] && _bad "dry-run: redirection escaped the scratch cwd"
-    printf 'boot a\nmark m1\nscroll a 1 none until server x 5 tries 2\nassert server --since m1 ok\nsettle 1 "why"\nprobe a dump\nassert probe a nearby actor=b '"'"'dist<400'"'"' anim~idle\nassert probe-delta a stats fat '"'"'<'"'"' -20 2 3\nprobe a items\nassert probe-count a items = 0 obj=x\nconsole-object a "0, -7" 0-12 disable\n' > "$t/s4/steps.sh"
-    if bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" >/dev/null 2>&1; then _ok "dry-run: known mark, scroll close key, settle reason, probe verbs"
-    else _bad "dry-run: known mark, scroll close key, settle reason, probe verbs"; fi
+    printf 'boot a\nmark m1\nscroll a 1 none until server x 5 tries 2\nassert server --since m1 ok\nsettle 1 "why"\nprobe a dump\nassert probe a nearby actor=b '"'"'dist<400'"'"' anim~idle\nassert probe-delta a stats fat '"'"'<'"'"' -20 2 3\nprobe a items\nassert probe-count a items = 0 obj=x\nconsole-object a "0, -7" 0-12 disable\nwait probe a nearby actor=b '"'"'dist<400'"'"' 20\nwait probe a cell exterior=1\nwait probe a '"'"'cell'"'"' 5\nserver-file a setup/ok.lua\n' > "$t/s4/steps.sh"
+    if out=$(bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" 2>&1); then _ok "dry-run: known mark, scroll close key, settle reason, probe verbs, wait probe forms, server-file"
+    else _bad "dry-run: known mark, scroll close key, settle reason, probe verbs, wait probe forms, server-file" "$(grep FAIL <<<"$out" | head -3)"; fi
+    _sc_luac_find
+    if [ -n "$SC_LUAC" ]; then
+        printf 'return (1 +\n' > "$t/s4/setup/bad.lua"; printf 'boot a\nserver-file a setup/bad.lua\n' > "$t/s4/steps.sh"
+        out=$(bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" 2>&1); rc=$?
+        if [ "$rc" != 0 ] && grep -qF "server-file setup/bad.lua: Lua syntax" <<<"$out"; then _ok "dry-run rejects: server-file with a Lua syntax error"
+        else _bad "dry-run rejects: server-file with a Lua syntax error" "rc=$rc $(tail -3 <<<"$out")"; fi
+    else
+        echo "  skipped: no Lua compiler installed (server-file syntax check not exercised)"
+    fi
 
     rm -rf "$t"
     echo "selftest done (fails=$fails)"
@@ -2038,6 +2146,8 @@ scenario_selftest_probe() {
                                     printf '%s[rigprobe:done] p=%s t=9 seq=%s kind=stats lines=1\n' "$pre" "$who" "$n" >> "$cl" ;;
                             dump)   printf '%s[rigprobe:cell] p=%s t=9 seq=%s cell="Big Hall" x=1\n' "$pre" "$who" "$n" >> "$cl"
                                     printf '%s[rigprobe:done] p=%s t=9 seq=%s kind=dump lines=1 missing=weather\n' "$pre" "$who" "$n" >> "$cl" ;;
+                            cell)   printf '%s[rigprobe:cell] p=%s t=9 seq=%s cell="Big Hall" x=%s\n' "$pre" "$who" "$n" "$n" >> "$cl"
+                                    printf '%s[rigprobe:done] p=%s t=9 seq=%s kind=cell lines=1\n' "$pre" "$who" "$n" >> "$cl" ;;
                             quest)  ;;      # a client that never answers
                         esac ;;
                     console) [ "$arg" = refuse ] && { ok=0; det="player $who is not logged in"; } ;;
@@ -2124,6 +2234,29 @@ scenario_selftest_probe() {
     _check "assert probe: a new answered request clears it" "$SC_LAST_STATUS" PASS
     assert probe-delta a stats fat '<' 0 >/dev/null
     _check "probe-delta: the unanswered request is still one of the last two -> FAIL" "$SC_LAST_STATUS" FAIL
+
+    # wait probe <p> <kind> <cond>... [cap]: re-requests until a line meets the conditions.
+    local want=$((SC_BRIDGE_SEQ + 3))
+    wait probe a cell "x>=$want" 10 >/dev/null
+    case $SC_LAST_STATUS/${SC_RDET[SC_STEP]} in "PASS/seq $want (request 3,"*) _ok "wait probe state: PASS on the third request, naming its seq";;
+        *) _bad "wait probe state: PASS on the third request, naming its seq" "$SC_LAST_STATUS ${SC_RDET[SC_STEP]}";; esac
+    assert probe a cell "x=$want" >/dev/null;    _check "wait probe state: a later assert reads the request that passed" "$SC_LAST_STATUS" PASS
+    wait probe a cell cell=Nowhere 1 >/dev/null
+    case $SC_LAST_STATUS/${SC_RDET[SC_STEP]} in "FAIL/no cell line with cell=Nowhere within 1s ("*"last answered seq"*'cell="Big Hall"'*) _ok "wait probe state: FAIL after the cap quotes the last request";;
+        *) _bad "wait probe state: FAIL after the cap quotes the last request" "$SC_LAST_STATUS ${SC_RDET[SC_STEP]}";; esac
+    wait probe a weather weather=clear 1 >/dev/null; _check "wait probe state: a missing kind cap -> SKIP" "$SC_LAST_STATUS" SKIP
+    mark >/dev/null
+    printf '%s[rigprobe:stats] p=a t=7 seq=0 hp=3\n' "$pre" >> "$SC_RUN/client-a.log"
+    wait probe a 'stats' 1 >/dev/null;              _check "wait probe: a kind name alone is still an ERE" "$SC_LAST_STATUS" PASS
+
+    # server-file <p> <file>: the file's text with $P_* substituted is one lua command.
+    printf -- '-- a comment\nlocal greeting = "$P_WORD"\nreturn greeting .. ${P_N}\n' > "$SC_DIR/setup/hi.lua"
+    P_WORD=hello P_N=7 server-file a setup/hi.lua >/dev/null
+    _check "server-file: parameters substituted, one lua command" "$SC_LAST_STATUS|$(cat "$dir/cmd-$SC_BRIDGE_SEQ.lua")|$(cut -f1,2 "$dir/cmd-$SC_BRIDGE_SEQ.meta")" \
+        $'OK|-- a comment\nlocal greeting = "hello"\nreturn greeting .. 7|lua\ta'
+    server-file a setup/hi.lua >/dev/null
+    case $SC_LAST_STATUS/${SC_RDET[SC_STEP]} in "FAIL/server-file hi.lua: \$P_WORD is not a parameter"*) _ok "server-file: an unset parameter -> FAIL, nothing sent";;
+        *) _bad "server-file: an unset parameter -> FAIL, nothing sent" "$SC_LAST_STATUS ${SC_RDET[SC_STEP]}";; esac
 
     kill "$fb" 2>/dev/null; builtin wait "$fb" 2>/dev/null
     local t0=$SECONDS
