@@ -222,7 +222,8 @@ bin/rig run <dir>... | --tag T | --all  [--out DIR] [--capture] [--strict-refs] 
 
 The other commands (`bin/rig help <command>` for each): `list`, `new`, `lint`, `explain` (the
 failing steps of every attempt of a run with the file, byte window and line range to open),
-`rerun-failed`, `up` (a scenario's world left running for exploration), `down`, and `cmd` (one
+`rerun-failed`, `stats` (counts, durations and a recent-versus-long-run judgment per scenario across
+run sets, §5.1), `up` (a scenario's world left running for exploration), `down`, and `cmd` (one
 server-bridge command to the world `up` left running: `bin/rig cmd probe a nearby`).
 
 ### 4.1 Exit codes and verdict
@@ -288,6 +289,35 @@ blocks or fails a run.
 | `start_cpu` | the `/proc/stat` busy and total ticks at the start (input of `run_busy`) |
 | `duration` | seconds from start to end |
 | `run_busy` | % of all cores busy from start to end, the run's own server and clients included |
+
+### 5.1 `bin/rig stats`
+
+```
+bin/rig stats [--runs N | --days D] [--scenario NAME]... [--window W] [--root DIR] [--json]
+```
+
+Reads every run set under `RIG_RUNS` (a directory with `RESULTS`; worlds from `bin/rig up` are left
+out) and prints, per scenario: runs, attempts, first-attempt passes, `PASS-RETRY`, final `FAIL`,
+`REGRESSION` and `INFRA`, the failed-attempt rate, the flake rate (runs that passed only on a retry),
+mean and max attempt duration (`load.txt`, else the last `[t+Ns]` stamp of `run.log`), the last `W`
+attempts as letters (`P` pass, `F` fail, `R` regression, `I` infra; default `W` = 10), and a judgment
+of those attempts against all earlier ones:
+
+| Judgment | Meaning |
+|---|---|
+| `ok` | no failure in the window |
+| `unlucky (p=…)` | the window's failures are likely at the earlier failure rate |
+| `suspicious (p=…)` | p < 0.05: re-run, and look at what changed |
+| `likely regression (p=…)` | p < 0.01: the failure rate went up |
+| `too few runs` | fewer than 10 earlier attempts to compare against |
+
+`p` is the binomial probability of at least the window's number of failures in `W` attempts at the
+earlier rate, estimated as (failures + 1) / (attempts + 2) so a clean history does not make one
+failure impossible. A judgment row with failures also names the last failing step, the CPU busy at
+its start and its directory. A final table gives the pass rate of all selected attempts by CPU busy
+at attempt start (`start_busy`; `start_loadavg` per core for attempts recorded without a sample) in
+the buckets <10 %, 10-30 %, 30-60 %, >=60 % and unknown. `--json` prints the same as one document,
+with the busy buckets per scenario too. Exit 0, 1 when nothing is found, 64 usage.
 
 ## 6. Geometry contract
 

@@ -75,7 +75,13 @@ gitignored.
 bin/rig explain latest        # each failing step: its steps.sh line, the log window it searched,
                               # the shot/reference/diff or signature diff to open
 bin/rig rerun-failed latest   # run what failed again
+bin/rig stats                 # per scenario across all runs: passes, retries, failures, durations,
+                              # and whether recent failures are bad luck or a likely regression
 ```
+
+A run records the host's load next to its verdict (`load.txt`) and never waits for an idle box: a
+software-GL test can fail by chance on a busy box, so re-run it (`bin/rig run --retry-failed 1`) and
+let `bin/rig stats` show whether a scenario's failure rate went up.
 
 **5. Explore by hand** when you do not yet know how to drive an action headlessly:
 
@@ -94,13 +100,14 @@ bin/rig down                  # stops everything up (or a killed run) left runni
 
 ```
 rig.conf.example     copy to rig.conf; every key, commented: build, scripts, content profiles, runs, displays
-bin/rig              the command line: doctor, list, new, lint, run, explain, rerun-failed, up, down, cmd
+bin/rig              the command line: doctor, list, new, lint, run, explain, rerun-failed, stats, up,
+                     down, cmd
 bin/run-example.sh   shorthand for `bin/rig run scenarios/example`
 lib/rig.sh           the rig: run dirs, CoreScripts work copy, boot server+clients, load fixtures, drive
                      input, event-gated waits, capture
 lib/scenario.sh      the runner: conf parser, verbs, log windows, verdict, run sets (+ selftest)
 lib/cli.sh           the authoring and diagnosis subcommands of bin/rig
-lib/stats.sh         host load recording (load.txt) (+ selftest)
+lib/stats.sh         host load recording (load.txt) and `bin/rig stats` (+ selftest)
 lib/compare.sh       screenshot regression compare (magick, per-image tolerance) — library + CLI + selftest
 lib/logcheck.sh      log event-signature compare (masked, ordered) — library + CLI + selftest
 overlay/             the rig's server-side bridge, layered into every CoreScripts work copy: anchor log
@@ -114,7 +121,8 @@ docs/                the manuals (below)
 ## Documentation
 
 - **[docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md)** — the scenario directory, every
-  `scenario.conf` key, every `steps.sh` verb, log windows, exit codes, the run directory, the client
+  `scenario.conf` key, every `steps.sh` verb, log windows, exit codes, the run directory and
+  `bin/rig stats`, the client
   probe's lines and the server bridge's command files.
 - **[docs/WRITING-SCENARIOS.md](docs/WRITING-SCENARIOS.md)** — how to author a test: prepare a start
   state (position players, set spells/gear/skills, edit server save files), the fixture format,

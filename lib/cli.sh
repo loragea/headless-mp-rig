@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cli.sh — the authoring and diagnosis subcommands of bin/rig: list, new, lint, explain, rerun-failed,
-# up, down, cmd, and the per-subcommand help. bin/rig sources this after lib/rig.sh and lib/scenario.sh;
+# up, down, cmd, and the per-subcommand help (stats lives in lib/stats.sh). bin/rig sources this after lib/rig.sh and lib/scenario.sh;
 # each rig_cli_<cmd> returns the subcommand's exit code (64 = usage error). Not meant to be run.
 #
 # Everything here reads what the runner writes (docs/SCENARIO-FORMAT.md §4-§5): scenario.conf without
@@ -22,6 +22,7 @@ usage: bin/rig <command> [args]     (bin/rig help <command> for one command)
   run <dir>...             run scenarios and write one verdict per scenario
   explain [run|latest]     the failing steps of a run and the file to open for each
   rerun-failed [run|latest]  run again the scenarios that failed in a run
+  stats [--runs N|--days D]  pass, retry and fail counts per scenario across runs; unlucky or regression
   up <dir> [player...]     boot a scenario's server and clients, log the players in, leave them running
   down                     stop everything `up` or a killed run left running
   cmd <verb> <player> ...  send one server-bridge command to the world `up` left running, print the answer
@@ -87,6 +88,7 @@ usage: bin/rig rerun-failed [<run-dir>|latest] [run flags...]
   Exit: the new run's code; 0 with a note when nothing failed.
 EOF
             ;;
+        stats) _st_usage ;;
         up) cat <<'EOF'
 usage: bin/rig up <dir> [player...]
   Bring a scenario's world up and leave it running for exploration: its fixture, overlay, settings
