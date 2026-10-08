@@ -493,7 +493,7 @@ _cli_live() {   # return 0 if any rig process is running
     [ -n "$out" ]
 }
 rig_cli_up() {
-    local dir='' a p name set out code fixture conf disp pid i
+    local dir='' a p name set out code fixture conf disp pid i prof
     local -a want=() pl=()
     for a in "$@"; do
         case $a in
@@ -544,12 +544,12 @@ rig_cli_up() {
     for i in "${!pl[@]}"; do
         p=${pl[i]}
         case " ${want[*]} " in *" $p "*) ;; *) continue;; esac
-        case $i in 0) disp=$RIG_DISPLAY;; 1) disp=$RIG_DISPLAY2;; *) disp=$RIG_DISPLAY3;; esac
+        case $i in 0) disp=$RIG_DISPLAY; prof=$RIG_PROFILE;; 1) disp=$RIG_DISPLAY2; prof=$RIG_PROFILE2;; *) disp=$RIG_DISPLAY3; prof=$RIG_PROFILE3;; esac
         pid=''
         for a in $(pgrep -x "$RIG_CLIENT_BIN"); do
             tr '\0' '\n' < "/proc/$a/environ" 2>/dev/null | grep -qx "DISPLAY=$disp" && pid=$a
         done
-        printf '  %-8s pid %-8s log %s   display %s   profile %s\n' "$p" "${pid:-?}" "$out/client-$p.log" "$disp" "$out/profiles/$p"
+        printf '  %-8s pid %-8s log %s   display %s   profile %s\n' "$p" "${pid:-?}" "$out/client-$p.log" "$disp" "$prof"
     done
     disp=$RIG_DISPLAY
     cat <<EOF

@@ -60,9 +60,9 @@ RIG_DISPLAY=${RIG_DISPLAY:-:99}                              # client 1's displa
 RIG_DISPLAY2=${RIG_DISPLAY2:-:100}                           # client 2's display (2-player runs)
 RIG_DISPLAY3=${RIG_DISPLAY3:-:101}                           # client 3's display (3-player scenarios)
 RIG_SCREEN=${RIG_SCREEN:-1280x720x24}                        # same on ALL displays (window-geometry math)
-RIG_PROFILE=${RIG_PROFILE:-}                                 # isolated XDG profile of client 1; empty = the
-RIG_PROFILE2=${RIG_PROFILE2:-}                               # run dir's profiles/client<n> (scenario runs:
-RIG_PROFILE3=${RIG_PROFILE3:-}                               # profiles/<player>), /tmp/mp-rig-profile<n> without one
+RIG_PROFILE=${RIG_PROFILE:-/tmp/mp-rig-profile}              # isolated XDG profile (client 1). Keep profiles on a
+RIG_PROFILE2=${RIG_PROFILE2:-/tmp/mp-rig-profile2}           # RAM-backed /tmp: client disk writes on a slow
+RIG_PROFILE3=${RIG_PROFILE3:-/tmp/mp-rig-profile3}           # filesystem shift frame timing and screenshot values
 RIG_SETTINGS_SRC=${RIG_SETTINGS_SRC:-}                       # optional settings.cfg to seed the profile
 RIG_SHOTDIR=${RIG_SHOTDIR:-/tmp/mp-rig-shots}                # where capture() writes PNGs + captures.tsv
 RIG_SERVER_LOAD=${RIG_SERVER_LOAD:-3}                        # seconds to let the server bind the port
@@ -474,25 +474,11 @@ rig_start_server() {
     sleep "$RIG_SERVER_LOAD"
 }
 
-# _rig_resolve_profile <n> — give client n's profile variable (RIG_PROFILE, RIG_PROFILE2, RIG_PROFILE3) its
-# default unless it was set to something else: <run dir>/profiles/client<n> when a run dir exists (so the
-# cfg a client booted with and its MyGUI.log stay with the run), else /tmp/mp-rig-profile<n>. Re-resolved while the value
-# is the last default, so a run dir created later still gets the profiles.
-_RIG_PROFILE_AUTO=('' '' '' '')
-_rig_resolve_profile() {
-    local n=$1 var=RIG_PROFILE auto
-    [ "$n" = 1 ] || var=RIG_PROFILE$n
-    if [ -n "$RIG_RUN_DIR" ] && [ -d "$RIG_RUN_DIR" ]; then auto=$RIG_RUN_DIR/profiles/client$n
-    else auto=/tmp/mp-rig-profile${n#1}; fi
-    if [ -z "${!var}" ] || [ "${!var}" = "${_RIG_PROFILE_AUTO[n]}" ]; then
-        printf -v "$var" '%s' "$auto"; _RIG_PROFILE_AUTO[n]=$auto
-    fi
-}
 # Fresh isolated profile; optionally seed a settings.cfg (model remaps etc.). $1 = profile dir
-# (default: client 1's, RIG_PROFILE, resolved by _rig_resolve_profile).
+# (default RIG_PROFILE; pass RIG_PROFILE2 for the second client).
 rig_make_profile() {
-    local prof=${1:-}
-    if [ -z "$prof" ]; then _rig_resolve_profile 1; prof=$RIG_PROFILE; fi
+    local prof=${1:-$RIG_PROFILE}
+    [ -n "$prof" ] || rig_die "rig_make_profile: no profile dir (RIG_PROFILE is empty)"
     rm -rf "$prof"
     mkdir -p "$prof/config/openmw" "$prof/data"
     [ -n "$RIG_SETTINGS_SRC" ] && [ -f "$RIG_SETTINGS_SRC" ] && \
@@ -520,11 +506,11 @@ _rig_boot() {
     echo $!
 }
 # $1 = client log path. Sets RIG_CLI (RIG_PROFILE on RIG_DISPLAY). Single-client repros use this.
-rig_start_client()  { [ -d "${RIG_PROFILE:-}" ] || rig_make_profile; RIG_CLI=$(_rig_boot "$1" "$RIG_PROFILE" "$RIG_DISPLAY"); }
+rig_start_client()  { RIG_CLI=$(_rig_boot "$1" "$RIG_PROFILE" "$RIG_DISPLAY"); }
 # Second client for 2-player runs: own profile, its OWN display (RIG_DISPLAY2). Sets RIG_CLI2.
-rig_start_client2() { _rig_resolve_profile 2; rig_make_profile "$RIG_PROFILE2"; RIG_CLI2=$(_rig_boot "$1" "$RIG_PROFILE2" "$RIG_DISPLAY2"); }
+rig_start_client2() { rig_make_profile "$RIG_PROFILE2"; RIG_CLI2=$(_rig_boot "$1" "$RIG_PROFILE2" "$RIG_DISPLAY2"); }
 # Third client for 3-player scenarios: own profile + display (RIG_DISPLAY3). Sets RIG_CLI3.
-rig_start_client3() { _rig_resolve_profile 3; rig_make_profile "$RIG_PROFILE3"; RIG_CLI3=$(_rig_boot "$1" "$RIG_PROFILE3" "$RIG_DISPLAY3"); }
+rig_start_client3() { rig_make_profile "$RIG_PROFILE3"; RIG_CLI3=$(_rig_boot "$1" "$RIG_PROFILE3" "$RIG_DISPLAY3"); }
 # Log a client out (disconnect) by killing its process. $1 = the PID var's value (e.g. "$RIG_CLI").
 # The server then transfers cell authority to a remaining visitor — a thing scenarios test.
 rig_logout() { kill "$1" 2>/dev/null || true; sleep 2; }

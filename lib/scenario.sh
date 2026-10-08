@@ -164,7 +164,7 @@ SC_DIR='' SC_RUN='' SC_NAME='' SC_DRY=0 SC_INFRA='' SC_STEP=0 SC_T0=$SECONDS SC_
 SC_CUR_STEP=0 SC_CUR_LINE='' SC_CUR_DESC='' SC_LAST_STATUS='' SC_FIRST_LOGIN=1
 SC_CAPTURE=${SC_CAPTURE:-0} SC_STRICT=${SC_STRICT:-0} SC_KEEP_UP=${SC_KEEP_UP:-0} SC_ATTEMPT=${SC_ATTEMPT:-1}
 SC_PLAYERS=()
-declare -A SC_BOOT_HOW=() SC_SLOT=() SC_PASS=() SC_OFF=() SC_NAMED=() SC_BOOTED=() SC_IN=() SC_SHOTROW=() SC_PAIRIN=()
+declare -A SC_EVER_BOOTED=() SC_BOOT_HOW=() SC_SLOT=() SC_PASS=() SC_OFF=() SC_NAMED=() SC_BOOTED=() SC_IN=() SC_SHOTROW=() SC_PAIRIN=()
 # Rows, indexed by step number: status, call site, verb text, t+s, offsets, detail.
 declare -a SC_RSTAT=() SC_RLINE=() SC_RDESC=() SC_RT=() SC_ROFF=() SC_RDET=()
 
@@ -441,7 +441,7 @@ _sc_boot_impl() {
             2) rig_start_xvfb2 3>&-; rig_start_client2 "$log" 3>&- ;;
             3) rig_start_xvfb3 3>&-; rig_start_client3 "$log" 3>&- ;;
         esac
-        SC_BOOTED[$p]=1
+        SC_BOOTED[$p]=1; SC_EVER_BOOTED[$p]=1
     done
     # The implicit mark: after the clients start (each start truncates its log), before the waits. A
     # server this boot started is read from its first line.
@@ -930,9 +930,26 @@ _sc_finalize() {
         { echo "$SC_TSV_HEADER"; for i in "${!SC_RSTAT[@]}"; do _sc_row_text "$i"; echo; done; } > "$SC_RUN/steps.tsv"
         _sc_result_line "$status" "$code" "${SC_NAME:-?}" "$fails" "$regs" "$SC_ATTEMPT" > "$SC_RUN/RESULT"
         rm -f "$SC_RUN"/.baseline-*.png
+        _sc_copy_profiles
     fi
     SC_RESULT=$(_sc_result_line "$status" "$code" "${SC_NAME:-?}" "$fails" "$regs" "$SC_ATTEMPT")
     _sc_say "$SC_RESULT"
+}
+# _sc_copy_profiles — copy each booted client's profile config (the content block it booted with,
+# settings.cfg, MyGUI.log) into profiles/<player>/. The live profiles stay on RIG_PROFILE* (RAM-backed
+# /tmp by default), because client disk writes on a slow filesystem shift frame timing.
+_sc_copy_profiles() {
+    local i p prof f
+    for i in "${!SC_PLAYERS[@]}"; do
+        p=${SC_PLAYERS[i]}
+        case $i in 0) prof=$RIG_PROFILE;; 1) prof=$RIG_PROFILE2;; *) prof=$RIG_PROFILE3;; esac
+        [ -n "${SC_EVER_BOOTED[$p]:-}" ] && [ -d "$prof/config/openmw" ] || continue
+        mkdir -p "$SC_RUN/profiles/$p"
+        for f in openmw.cfg settings.cfg MyGUI.log; do
+            [ -f "$prof/config/openmw/$f" ] && cp "$prof/config/openmw/$f" "$SC_RUN/profiles/$p/"
+        done
+    done
+    return 0
 }
 # _sc_finalize_skip <reason> — content missing: RESULT SKIP 4, nothing booted.
 _sc_finalize_skip() {
@@ -996,12 +1013,6 @@ _sc_run_one() {
     if ! msg=$(rig_content_check "$CONTENT"); then
         _sc_finalize_skip "content profile '$CONTENT' is not available: ${msg//$'\n'/; }"; exit
     fi
-    # One client profile per player in the run dir (profiles/<player>), unless rig.conf sets RIG_PROFILE*.
-    local i v
-    for i in "${!SC_PLAYERS[@]}"; do
-        v=RIG_PROFILE; [ "$i" = 0 ] || v=RIG_PROFILE$((i+1))
-        [ -n "${!v:-}" ] || printf -v "$v" '%s' "$SC_RUN/profiles/${SC_PLAYERS[i]}"
-    done
     [ "$PROBE" = 1 ] && _sc_say "note: PROBE=1 ignored (the client probe is not available yet)"
 
     SC_SETUP_WHAT="checking prerequisites"

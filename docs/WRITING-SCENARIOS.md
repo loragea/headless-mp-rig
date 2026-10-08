@@ -243,8 +243,10 @@ it. The key is empty by default and never auto-detected; `bin/rig doctor` prints
 
 **Isolated profiles are mandatory.** A shared `~/.config/openmw` carries another engine version's
 `input_v3.xml`/`settings.cfg`/`shaders.yaml`; sharing it breaks this build's bindings and shaders.
-The rig runs each client under an isolated `XDG_CONFIG_HOME`/`XDG_DATA_HOME`, created fresh in the
-run directory (`profiles/<player>/`), where the cfg it booted with stays for inspection.
+The rig runs each client under an isolated `XDG_CONFIG_HOME`/`XDG_DATA_HOME` (`RIG_PROFILE*`, wiped
+at each client start) on RAM-backed `/tmp`: the client writes caches there, and on a slow disk those
+writes shift frame timing enough to move screenshot values. `bin/rig run` copies the cfg each client
+booted with into the run directory (`profiles/<player>/`).
 
 ---
 
