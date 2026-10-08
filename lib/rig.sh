@@ -74,10 +74,13 @@ RIG_BOOT_SETTLE=${RIG_BOOT_SETTLE:-6}                        # ...then settle (m
 RIG_CHARGEN_PWBOX=${RIG_CHARGEN_PWBOX:-4}                     # secs for the "create password" box after name
 RIG_CHARGEN_DLG=${RIG_CHARGEN_DLG:-5}                         # secs for each chargen dialog to render (llvmpipe)
 RIG_WIGGLE_INTERVAL=${RIG_WIGGLE_INTERVAL:-20}               # idle-wiggler period (s); MUST be < fVanityDelay (30s)
+RIG_PROBE_PERIOD=${RIG_PROBE_PERIOD:-5}                     # client probe: heartbeat period (real seconds)
+RIG_PROBE_RANGE=${RIG_PROBE_RANGE:-2048}                    # client probe: `nearby` radius (game units)
+RIG_PROBE_CAPS_OFF=${RIG_PROBE_CAPS_OFF:-}                  # client probe: caps to report missing (tests a SKIP path)
 
 RIG_XVFB='' RIG_XVFB2='' RIG_XVFB3='' RIG_SRV='' RIG_CLI='' RIG_CLI2='' RIG_CLI3='' RIG_WIGGLER=''
 # Per-run state (set by rig_run_dir / rig_corescripts_overlay / rig_set_server_home / rig_add_content).
-RIG_RUN_DIR=${RIG_RUN_DIR:-} RIG_CORESCRIPTS_WORK='' RIG_SRV_HOME='' RIG_CONTENT_LABEL='' RIG_CONTENT_LINES=()
+RIG_RUN_DIR=${RIG_RUN_DIR:-} RIG_CORESCRIPTS_WORK='' RIG_SRV_HOME='' RIG_CONTENT_LABEL='' RIG_CONTENT_LINES=() RIG_CONTENT_FILES=()
 
 rig_die()  { echo "rig: $*" >&2; exit 1; }
 rig_note() { echo ">>> rig: $*" >&2; }
@@ -430,8 +433,31 @@ rig_use_content() {
     lines+=("data=\"$data\"")
     for f in $(_rig_content_get "$n" ARCHIVES); do lines+=("fallback-archive=$f"); done
     for f in "${files[@]}"; do lines+=("content=$f"); done
+    RIG_CONTENT_FILES=("${files[@]}")
     rig_set_required_datafiles "${files[@]}"
     rig_add_content "$n" "${lines[@]}"
+}
+
+# rig_use_probe <dir> — load the rig's client probe (probe/: rig-probe.omwscripts, a read-only Lua
+# player script; needs an OpenMW >= 0.48 client) in this run, after rig_use_content. Copies probe/ to
+# <dir> (a run-scoped directory), writes <dir>/scripts/rig/probe_conf.lua from RIG_PROBE_PERIOD,
+# RIG_PROBE_RANGE and RIG_PROBE_CAPS_OFF, then appends data=<dir> + content=rig-probe.omwscripts LAST
+# to the clients' content block and rig-probe.omwscripts LAST to requiredDataFiles.json, so the
+# client's plugin list and the server's stay entry-for-entry equal. Nothing outside <dir>, the
+# client profiles and the CoreScripts work copy is written.
+rig_use_probe() {
+    local dir=${1:?rig_use_probe: need a directory} off
+    [ -f "$RIG_ROOT/probe/rig-probe.omwscripts" ] || rig_die "rig_use_probe: no probe/rig-probe.omwscripts in $RIG_ROOT"
+    [ "${#RIG_CONTENT_FILES[@]}" -gt 0 ] || rig_die "rig_use_probe: call rig_use_content first"
+    rm -rf "$dir"; mkdir -p "$dir" || rig_die "rig_use_probe: cannot create $dir"
+    cp -a "$RIG_ROOT/probe/." "$dir/"
+    [[ $RIG_PROBE_PERIOD =~ ^[0-9]+([.][0-9]+)?$ ]] || rig_die "RIG_PROBE_PERIOD: '$RIG_PROBE_PERIOD' is not a number of seconds"
+    [[ $RIG_PROBE_RANGE =~ ^[0-9]+$ ]] || rig_die "RIG_PROBE_RANGE: '$RIG_PROBE_RANGE' is not a distance in game units"
+    off=${RIG_PROBE_CAPS_OFF//[^A-Za-z0-9_,]/,}
+    printf "return { period = %s, range = %s, off = '%s' }\n" "$RIG_PROBE_PERIOD" "$RIG_PROBE_RANGE" "$off" \
+        > "$dir/scripts/rig/probe_conf.lua"
+    rig_set_required_datafiles "${RIG_CONTENT_FILES[@]}" rig-probe.omwscripts
+    rig_add_content "$RIG_CONTENT_LABEL+probe" "${RIG_CONTENT_LINES[@]}" "data=\"$dir\"" content=rig-probe.omwscripts
 }
 
 rig_start_xvfb() {

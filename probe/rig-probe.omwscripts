@@ -1,0 +1,2 @@
+# headless-mp-rig client probe: a read-only player script that prints engine state as [rigprobe:*] log lines.
+PLAYER: scripts/rig/probe.lua
