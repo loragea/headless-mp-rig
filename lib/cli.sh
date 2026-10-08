@@ -355,6 +355,13 @@ _cli_explain_row() {
     if [[ $off =~ ^([A-Za-z0-9_]+):([0-9]+)-([0-9]+)$ ]]; then
         k=${BASH_REMATCH[1]}
         _cli_window "$(_cli_logfile "$r" "$k")" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+        if [[ $det == *"matches before the window"* ]] && [[ $det =~ ^no\ /(.*)/\ in\  ]]; then
+            local re=${BASH_REMATCH[1]} hit
+            hit=$(grep -nE -- "$re" "$(_cli_logfile "$r" "$k")" 2>/dev/null | tail -1 | cut -c1-160)
+            [ -n "$hit" ] && echo "          it matched earlier, at line ${hit%%:*}: ${hit#*:}"
+            echo "          fix: put the assert right after the verb that causes the line, or 'mark <name>'"
+            echo "          before that verb and add '--since <name>' (docs/SCENARIO-FORMAT.md §3.1)"
+        fi
     fi
     case $verb in
         shot)
