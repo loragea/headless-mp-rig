@@ -11,10 +11,12 @@ Needs `bash`, `shellcheck` and ImageMagick 7 (the `magick` command). No game bin
 shellcheck -S warning lib/*.sh bin/*.sh bin/rig templates/*.sh
 lib/compare.sh selftest
 lib/logcheck.sh selftest
+lib/scenario.sh selftest
+bin/rig run --dry-run scenarios/example
 ```
 
-CI (`.github/workflows/ci.yml`) runs exactly these three commands. A change to the rig's runtime
-behaviour should also pass `bin/run-example.sh` against your own build; that needs a compiled
+CI (`.github/workflows/ci.yml`) runs exactly these commands. A change to the rig's runtime
+behaviour should also pass `bin/rig run scenarios/example` against your own build; that needs a compiled
 client and server, so it is not part of CI.
 
 ## Rules
@@ -34,7 +36,7 @@ client and server, so it is not part of CI.
 1. Implement it in the library, generalized. Anything that differs between setups is a `RIG_*`
    variable with a default, documented in `rig.conf.example`.
 2. Prove it: add a `selftest` case when the logic is testable without a game (masking, metrics,
-   thresholds), or a step in `bin/run-example.sh` when the free example content can exercise it.
+   thresholds), or a step in `scenarios/example/steps.sh` when the free example content can exercise it.
 3. Document it. A headless recipe is a new file in `docs/cookbook/` named by its ID,
    `KB-<n>-<slug>.md`: `n` is the next free number, `slug` is 2–6 lowercase kebab words that make
    sense to a reader who has not seen the recipe. Line 1 is `# <ID> — <title>: <one-phrase

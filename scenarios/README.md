@@ -14,7 +14,7 @@ scenarios/<name>/
 
 - **`example/`** — a runnable two-client example built on OpenMW's freely-licensed **example-suite**
   content (no commercial game data required): both clients join one world and see each other, proven
-  from a blessed server-log signature + inline log asserts. Run it with `bin/run-example.sh`; see
+  from a blessed server-log signature + inline log asserts. Run it with `bin/rig run scenarios/example`; see
   [example/README.md](example/README.md) for what it asserts and the example-suite quirks it works
   around. (Carries its own `settings.cfg` + `coreScripts-overlay/` compat shim so stock CoreScripts
   survive on non-Morrowind content.)

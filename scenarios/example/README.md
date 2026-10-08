@@ -8,59 +8,55 @@ with cross-client sync verified from the logs.**
 Run it:
 
 ```sh
-# long run (server + 2 client boots on software GL) — drive it via bg.sh so it isn't killed
-tools/bg.sh start bin/run-example.sh
-tools/bg.sh wait            # repeat while it prints 124
+bin/rig run scenarios/example          # a few minutes on software GL
 ```
 
-`bin/run-example.sh` exits **0 (green)** when every assertion passes, **non-zero (red)** otherwise.
+The runner exits **0** when every step passes (codes: `docs/SCENARIO-FORMAT.md` §4.1). The run
+directory (`$RIG_RUNS/<stamp>-example/example/`) holds `steps.tsv` (one row per step, with its
+`steps.sh` line), `run.log`, both client logs, the server log and the shots.
 
-## What it asserts (every assertion backed by a real log line)
+## What it asserts
 
-The deterministic PASS/FAIL gate is **log-based** (`rig_wait_event` inline asserts + a blessed
-`lib/logcheck.sh` server-log signature). In one run:
+The choreography is `steps.sh`; the metadata (players, passwords, content profile, overlay,
+signature vocabulary) is `scenario.conf`. In one run:
 
 1. **Both clients are admitted** — server logs `Client was allowed to connect` ×2.
-2. **Both players are created** server-side — `Creating new player` ×2.
-3. **The example-suite compat shim ran** — `[example-suite-compat] filled …` (see *Quirks* below); its
-   absence means the server would have crashed on non-Morrowind content.
-4. **Cell authority** — the first player in (`a`) owns the shared cell: `Authority of cell 0, -7 is now a`.
-5. **Mutual cross-client visibility** (the bug class this whole rig exists to catch):
-   - client `a`'s log: `b (…) has joined the server` **and** `DedicatedPlayer b` — a sees b;
-   - client `b`'s log: `DedicatedPlayer a` — b sees a.
-6. **Stability tripwires** — neither client logs `committed suicide` (the water-breathing fixture
-   holds — see *Quirks*), and the server log contains no `script error` / `Server crash` / Lua error.
+2. **Cell authority** — the first player in (`a`) owns the shared cell: `Authority of cell 0, -7 is now a`.
+3. **Mutual cross-client visibility** (the bug class this whole rig exists to catch): client `a`'s
+   log names `DedicatedPlayer b`, client `b`'s log names `DedicatedPlayer a`.
+4. **No server error** — `assert absent server "$RIG_TRIPWIRES"`.
+5. **Server-log signature** — `reference-logs/example-server.events` (6 normalized events: both
+   connects, both player creations, the compat shim's line, the authority line). A moved signature is
+   a `REGRESSION` (exit 2).
 
-The blessed server-log signature lives in `reference-logs/example-server.events` (6 normalized events).
-A signature move is a **regression** → investigate, or re-bless with `UPDATE_REFS=1 bin/run-example.sh`.
+`login` itself fails the run as `INFRA` unless the server logs `[rig-bridge] player <name> in`.
 
 ## Screenshot signals demonstrated
 
-The example also exercises **both screenshot verification modes** (`docs/VERIFICATION.md`) — their
-*feature* value here is incidental; the point is to show the mechanics end-to-end in a runnable scenario:
+- **DYNAMIC pair (must DIFFER).** On client `a`'s display, the spot in front of `a` where `b` will
+  stand (crop `240x300+520+340`) is captured before `b` logs in (`10-a-before-b`) and after
+  (`11-a-after-b`). `pair` gates *motion present*: `RMSE ≥ 0.005`. Measured: 0 without `b`, ~0.017
+  when `b` renders as the T-posed model, ~0.06 when it renders as the missing-mesh placeholder (both
+  occur). A sync bug that left `b` invisible to `a` leaves the two crops identical. Pair inputs need
+  no reference.
+- **STABLE blessed frame (must MATCH).** On client `b`'s display, the minimap cropped to
+  `88x84+950+576` (`20-b-minimap`, both player markers) is compared to
+  `reference-images/20-b-minimap.png` within the manifest tolerance (`RMSE ≤ 0.03`, measured
+  ~0.003–0.012). Cropping to a **stable GUI region** follows cookbook recipe
+  `KB-19-phash-bimodal-crop-gui-rmse`: the full 3D frame (animating water, a placeholder avatar) is
+  too variable to bless, but the minimap crop is not.
 
-- **DYNAMIC pair (must DIFFER).** On client `a`'s display, one frame is captured **before** `b` logs in
-  (`10-a-before-b` — `a` alone, one minimap marker) and one **after** (`11-a-after-b` — `b`'s avatar now
-  in view, two markers). The gate is *motion present* — `RMSE(10,11) ≥ 0.02` (measured ~0.081) — the
-  inverse of a static match. A sync bug that left `b` invisible to `a` would leave the two frames
-  near-identical and **fail** this. The pair is never blessed; only its mutual delta is gated, in-script.
-- **STATIC blessed frame (must MATCH).** On client `b`'s display, `b`'s minimap is cropped to a stable
-  region (`20-b-minimap` — showing both player markers) and compared to a blessed reference within a
-  per-image tolerance (`reference-images/manifest.tsv`: `RMSE ≤ 0.03`, measured ~0.008–0.012). Cropping
-  to a **stable GUI region** follows cookbook recipe `KB-19-phash-bimodal-crop-gui-rmse`: the full 3D
-  frame (animating water, a T-posed avatar) is too variable to bless, but the minimap crop is not. Re-bless with
-  `UPDATE_REFS=1 bin/run-example.sh` (rewrites `reference-images/20-b-minimap.png`).
-
-Adjust the minimap crop for a different resolution via `CROP_MINIMAP` (default `88x84+950+576`, for the
-rig's 1280×720 screen), and the dynamic floor via `DYN_FLOOR`.
+Re-blessing is a human decision. Copy the candidate from a green run over the reference:
+`shots/20-b-minimap.png` → `reference-images/20-b-minimap.png`, or `review/example-server.events` →
+`reference-logs/example-server.events`, and commit with the build it was captured on.
 
 ## The fixture
 
 `player/a.json` + `player/b.json` — two **returning** players (password = `a` for both), co-located in
 exterior cell `0, -7`, ~256 units apart. The scenario **resumes** them (no character generation — see
 below). The other four stateful subdirs (`cell/ world/ map/ recordstore/ custom/`) are empty. The
-client `[Models]` remap it needs is `settings.cfg` (seeded into each client profile via
-`RIG_SETTINGS_SRC`). The compat overlay the server needs is `coreScripts-overlay/` (see *Quirks*).
+client `[Models]` remap it needs is `settings.cfg` (`SETTINGS=`, seeded into each client profile).
+The compat overlay the server needs is `coreScripts-overlay/` (`OVERLAY=`, see *Quirks*).
 
 ### How the fixture was authored
 Because chargen cannot complete on example-suite (below), the saves were **not** produced by playing
@@ -92,6 +88,10 @@ These are properties of the free content, documented so the next person doesn't 
   disabled), "Generate Class" produces a stock class the data lacks (`Error in frame: Class 'Warrior'
   not found`), and the birthsign list is empty (OK disabled). That is why the scenario resumes a
   fixture instead of driving chargen every run.
+- **A client idling at the name box drowns.** Before login the client's placeholder character also sits
+  underwater; about 45 s after the client starts it dies, and a player who logs in after that resumes
+  at a random revive spot. `steps.sh` therefore boots `b` only after `a`'s first frame, so `b` logs
+  in ~25 s after its client starts.
 - **The world is entirely underwater.** With no landscape data, exterior cells are a flat grid ~2048
   units below the water plane, so a plain spawn **drowns** in a death/revive loop (non-deterministic
   revive locations). The fixture players carry a **permanent water-breathing** active effect (magic
@@ -99,13 +99,8 @@ These are properties of the free content, documented so the next person doesn't 
 
 ## Limitations / what this does NOT cover
 
-- **No blessed screenshot.** The deterministic proof is log-based. The run still captures a best-effort
-  frame (`50-a-sees-b.png`) as an artifact, but the all-underwater template makes a stable,
-  avatar-framed "a sees b" shot a calibration exercise of low added value over the log gate and the
-  in-frame minimap markers (each client's minimap shows the other player's marker). To bless one after
-  calibrating: `UPDATE_REFS=1 BLESS_SHOT=1 bin/run-example.sh`.
 - **Minimal choreography.** example-suite is a near-empty template — this proves connection, creation,
   cell authority, and mutual visibility (the sync core), not movement/combat/inventory choreography,
   which need richer content.
-- **`ID_PLAYER_MAP` never fires** for these returning players on example-suite, so the run gates client
-  readiness on connect + a world-load settle rather than the usual `rig_wait_boot` milestone.
+- **`ID_PLAYER_MAP` never fires** for these returning players on example-suite, so `boot` takes the
+  client's first settled frame (~16 s after start) as its boot milestone.

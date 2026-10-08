@@ -36,13 +36,14 @@ bin/rig doctor                    # checks every key; each problem names the key
 # sanity-check the verification libs with no game data needed:
 lib/compare.sh selftest
 lib/logcheck.sh selftest
+lib/scenario.sh selftest
 
 # run the worked example — two real clients in one world on FREE example-suite content, cross-client
 # sync asserted from the logs (green exit 0 / red non-zero). A full run takes a few minutes on
 # software GL; run it directly (or under your CI's long-job runner). See scenarios/example/README.md.
 # Everything a run writes lands in its own dir under RIG_RUNS (default runs/); your build dir and your
 # CoreScripts clone are only read.
-bin/run-example.sh
+bin/rig run scenarios/example     # scenario format: docs/SCENARIO-FORMAT.md
 
 # author + run a targeted feature test (see docs/FEATURE-TESTS.md):
 cp templates/repro-template.sh my-test.sh
@@ -63,7 +64,9 @@ lib/rig.sh           the rig: run dirs, CoreScripts work copy, boot server+clien
                      input, event-gated waits, capture
 lib/compare.sh       screenshot regression compare (magick, per-image tolerance) — library + CLI + selftest
 lib/logcheck.sh      log event-signature compare (masked, ordered) — library + CLI + selftest
-bin/run-example.sh   the runnable free-content example: 2 clients in one world, cross-client sync from logs
+bin/rig run          the scenario runner: scenario.conf + steps.sh -> one verdict (docs/SCENARIO-FORMAT.md)
+lib/scenario.sh      the runner's library: conf parser, verbs, log windows, verdict — + selftest
+bin/run-example.sh   shorthand for `bin/rig run scenarios/example`
 overlay/             the rig's server-side bridge, layered into every CoreScripts work copy
 templates/           starting points: repro-template.sh, explore-client.sh
 scenarios/           worked example fixtures + blessed references (free example-suite content)

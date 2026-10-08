@@ -8,7 +8,8 @@ jobs:
   lint-and-selftest:
     runs-on: ubuntu-latest
     # The compare library calls ImageMagick 7's `magick` CLI. Ubuntu runners ship ImageMagick 6
-    # (no `magick`); Debian 13 ships 7, so the job runs in a Debian 13 container.
+    # (no `magick`); Debian 13 ships 7, so the job runs in a Debian 13 container. The scenario
+    # selftest's `assert json` case needs python3.
     container: debian:trixie-slim
     steps:
       - name: Install tools
@@ -16,7 +17,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates git shellcheck imagemagick
+          apt-get install -y --no-install-recommends ca-certificates git shellcheck imagemagick python3
       - uses: actions/checkout@v4
       - name: Shell lint
         run: shellcheck -S warning lib/*.sh bin/*.sh bin/rig templates/*.sh
@@ -24,3 +25,7 @@ jobs:
         run: lib/compare.sh selftest
       - name: Selftest lib/logcheck.sh
         run: lib/logcheck.sh selftest
+      - name: Selftest lib/scenario.sh
+        run: lib/scenario.sh selftest
+      - name: Dry-run the example scenario
+        run: bin/rig run --dry-run scenarios/example
