@@ -54,12 +54,32 @@ is one row in `steps.tsv` carrying `steps.sh:<line>`.
 
 ### 3.1 Log windows
 
-The runner keeps a byte offset per log (server, each client). After every lifecycle, input and setup
-verb it advances all offsets to the current end of each log: an **implicit mark**. `mark [name]`
-does it explicitly and names the point; the name `start` is predefined (offset 0 everywhere).
+The runner keeps a byte offset per log (server, each client). **Before** a lifecycle, input, setup or
+custom verb acts, it records the current end of every log: an **implicit mark**. A `wait` or `assert`
+after the verb therefore sees everything the verb caused. `settle`, `wiggle`, `wait`, `assert`,
+`shot`, `pair`, `signature`, `checkpoint`, `note` and `artifact` never move it. `boot` marks after
+its clients start and before it waits for them; a server that `boot` starts is read from its first
+line. `mark [name]` moves the mark explicitly and names the point; the name `start` is predefined
+(offset 0 everywhere). A log that is shorter than its offset (a client restarted) is read from 0.
+
 `wait server|client` and `assert server|client` match **only past the last mark**; `--since <name>`
-(anywhere in the arguments) widens the window to a named mark. `assert count` and `assert absent`
-read the whole log. Matching is `grep -E`, case-sensitive.
+(anywhere in the arguments) widens the window to a named mark, and a `--since` without a name fails.
+`assert count` and `assert absent` read the whole log. Matching is `grep -E`, case-sensitive.
+
+Put each assert right after the verb that causes its line; `mark <name>` before a trigger whose
+effect you assert later, after other verbs have moved the mark:
+
+```
+login a
+assert server 'Authority of cell .* is now a'     # logged during login a: inside the window
+mark before-door
+chat a "/opendoor"
+key b space                                        # moves the mark past the door line
+assert server --since before-door 'door opened'    # widened back to the named mark
+```
+
+`--since start` reopens the whole log: an earlier occurrence of the line then passes the assert.
+Use it only for lines that can occur once per run.
 
 ### 3.2 Lifecycle
 

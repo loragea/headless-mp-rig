@@ -95,7 +95,7 @@ _sc_scenario_name() {
 _sc_load_conf() {
     local d=$1 k msg
     if ! msg=$(_sc_conf_check "$d/scenario.conf"); then SC_CONF_ERR=$msg; return 1; fi
-    for k in $SC_CONF_KEYS; do unset "$k"; done
+    for k in $SC_CONF_KEYS $(compgen -v P_); do unset "$k"; done     # no P_* inherited from the caller
     # shellcheck source=/dev/null
     source "$d/scenario.conf" || { SC_CONF_ERR="scenario.conf: sourcing failed"; return 1; }
     for k in $(compgen -v P_); do export "${k?}"; done
@@ -195,6 +195,9 @@ _sc_begin() {
     SC_CUR_LINE=$(_sc_callsite); SC_CUR_DESC=$(_sc_clean "${desc# }")
     if [ "$SC_DRY" = 1 ]; then _sc_dry_check "$@"; return 1; fi
     if [ -n "$SC_INFRA" ]; then _sc_row SKIP "" "after INFRA"; return 1; fi
+    if [ -n "${RIG_SRV:-}" ] && ! kill -0 "$RIG_SRV" 2>/dev/null; then
+        _sc_infra "the server (pid $RIG_SRV) died (see server.log)"; return 1
+    fi
     return 0
 }
 # _sc_row <status> <offsets> <detail> — close the current step.
@@ -240,15 +243,20 @@ _sc_offsets_now() {
     while IFS= read -r k; do out="$out $k:${SC_OFF[$k]:-0}"; done < <(_sc_logkeys)
     printf '%s' "${out# }"
 }
-# _sc_marked_row <status> <detail> — implicit mark after a lifecycle/input/setup verb, then the row.
-_sc_marked_row() { _sc_mark_all; _sc_row "$1" "$(_sc_offsets_now)" "${2:-}"; }
+# _sc_close_row <status> <detail> — close a lifecycle/input/setup/custom verb's row; the offsets column
+# records the implicit mark the verb took when it started acting (_sc_mark_all).
+_sc_close_row() { _sc_row "$1" "$(_sc_offsets_now)" "${2:-}"; }
 # _sc_window_start <logkey> <mark-name|''> — echo the window's start offset; 1 if the mark is unknown.
 _sc_window_start() {
     local k=$1 m=${2:-}
-    if [ -z "$m" ]; then printf '%s' "${SC_OFF[$k]:-0}"; return 0; fi
-    [ "$m" = start ] && { printf 0; return 0; }
-    [ -n "${SC_NAMED["$m|$k"]+x}" ] || return 1
-    printf '%s' "${SC_NAMED["$m|$k"]}"
+    local o
+    if [ -z "$m" ]; then o=${SC_OFF[$k]:-0}
+    elif [ "$m" = start ]; then o=0
+    elif [ -n "${SC_NAMED["$m|$k"]+x}" ]; then o=${SC_NAMED["$m|$k"]}
+    else return 1; fi
+    # A log shorter than its offset was rewritten (a client restarted): its whole content is new.
+    [ "$o" -gt "$(_sc_size "$(_sc_logfile "$k")")" ] && o=0
+    printf '%s' "$o"
 }
 # _sc_grep_from <file> <offset> <ERE> — does the ERE match a line in the file past byte <offset>?
 _sc_grep_from() { grep -qE -- "$3" < <(tail -c +"$(( $2 + 1 ))" "$1" 2>/dev/null); }
@@ -276,7 +284,7 @@ _sc_need_client() {
     _sc_known "$p" || { _sc_row FAIL "" "unknown player '$p' (PLAYERS=${SC_PLAYERS[*]})"; return 1; }
     [ -n "${SC_BOOTED[$p]:-}" ] || { _sc_row FAIL "" "player $p is not booted (call boot $p first)"; return 1; }
     pid=$(_sc_pid "$p")
-    kill -0 "$pid" 2>/dev/null || { _sc_row FAIL "" "client $p (pid $pid) is not running (see client-$p.log)"; return 1; }
+    kill -0 "$pid" 2>/dev/null || { _sc_infra "client $p (pid $pid) exited (see client-$p.log)"; return 1; }
     return 0
 }
 # Grab the player's display before an input verb: the baseline `wait stable` compares against.
@@ -297,15 +305,16 @@ _scv_boot() {
     SC_BOOT_MSG=''
     if ! _sc_boot_impl "$@"; then _sc_infra "$SC_BOOT_MSG"; return 1; fi
     [ -n "${RIG_WIGGLER:-}" ] && _sc_wiggler_restart
-    _sc_marked_row OK "$SC_BOOT_MSG"
+    _sc_close_row OK "$SC_BOOT_MSG"
 }
 # _sc_boot_impl <players>... — start what is not running and wait for each client's connection and
 # boot milestone. Sets SC_BOOT_MSG (the detail, or the reason on failure); returns 1 on failure.
 _sc_boot_impl() {
-    local p slot log pid t0 deadline out='' hit miss='' how
+    local p slot log pid t0 deadline out='' hit miss='' how srvnew=0
     for p in "$@"; do [ -n "${SC_BOOTED[$p]:-}" ] && { SC_BOOT_MSG="boot: $p is already booted"; return 1; }; done
     if [ -z "${RIG_SRV:-}" ]; then
-        if ! ( rig_require_clean ); then SC_BOOT_MSG="boot: a stale server is running (rig_require_clean refused)"; return 1; fi
+        if ! ( rig_require_clean ) 2>/dev/null; then SC_BOOT_MSG="boot: a $RIG_SERVER_BIN is already running (left by bin/rig up or a crashed run); stop it with: bin/rig down"; return 1; fi
+        srvnew=1
         rig_start_server 3>&-
         kill -0 "$RIG_SRV" 2>/dev/null || { SC_BOOT_MSG="boot: the server exited during start (see server.log)"; return 1; }
         out="server pid $RIG_SRV;"
@@ -319,6 +328,10 @@ _sc_boot_impl() {
         esac
         SC_BOOTED[$p]=1
     done
+    # The implicit mark: after the clients start (each start truncates its log), before the waits. A
+    # server this boot started is read from its first line.
+    _sc_mark_all
+    [ "$srvnew" = 1 ] && SC_OFF[server]=0
     t0=$SECONDS; deadline=$((t0 + RIG_BOOT_CAP))
     for p in "$@"; do
         log=$SC_RUN/client-$p.log; pid=$(_sc_pid "$p")
@@ -385,7 +398,7 @@ _scv_login() {
         SC_FIRST_LOGIN=0
         [ "$WIGGLE" != 0 ] && _sc_wiggler_restart
     fi
-    _sc_marked_row OK "server logged $p in ($mode)"
+    _sc_close_row OK "server logged $p in ($mode)"
 }
 _scv_logout() {
     _sc_begin logout "$@" || return 0
@@ -397,31 +410,33 @@ _scv_logout() {
     if _sc_poll 20 _sc_grep_from "$(_sc_logfile server)" "${SC_OFF[server]:-0}" "\[rig-bridge\] player $p out"; then
         det="server logged $p out"
     else det="client stopped; the server did not log '[rig-bridge] player $p out' within 20s"; fi
-    _sc_marked_row OK "$det"
+    _sc_close_row OK "$det"
 }
+# wiggle and settle are waits: they do not move the implicit mark.
 _scv_wiggle() {
     _sc_begin wiggle "$@" || return 0
     _sc_wiggler_restart
-    _sc_marked_row OK "idle wiggler on every booted display"
+    _sc_row OK "" "idle wiggler on every booted display"
 }
 _scv_settle() {
     _sc_begin settle "$@" || return 0
     local s=${1:-} why=${2:-}
     _sc_is_num "$s" || { _sc_row FAIL "" "settle: '$s' is not a number of seconds"; return 1; }
     sleep "$s"
-    _sc_marked_row OK "${why:-warning: settle without a reason}"
+    _sc_row OK "" "${why:-warning: settle without a reason}"
 }
 
 # ================================================================================================
-# Input verbs — each: check the client, grab the wait-stable baseline, act, implicit mark
+# Input verbs — each: check the client, grab the wait-stable baseline, implicit mark, act
 # ================================================================================================
-# _sc_input <verb-name> <p> <cmd>... — run cmd (with DISP set) and close the row.
+# _sc_input <p> <cmd>... — mark, run cmd, close the row: a later assert sees what the input caused.
 _sc_input() {
     local p=$1; shift
     _sc_need_client "$p" || return 1
     _sc_baseline "$p"
-    if "$@" >&2; then _sc_marked_row OK ""
-    else _sc_marked_row FAIL "input command failed: $*"; fi
+    _sc_mark_all
+    if "$@" >&2; then _sc_close_row OK ""
+    else _sc_close_row FAIL "input command failed: $*"; fi
 }
 _scv_key()   { _sc_begin key "$@" || return 0; local p=${1:-}; shift; [ $# -gt 0 ] || { _sc_row FAIL "" "key: no keys"; return 1; }
                _sc_input "$p" rig_key "$(_sc_disp_safe "$p")" "$@"; }
@@ -465,17 +480,18 @@ _scv_scroll() {
     fi
     _sc_need_client "$p" || return 1
     disp=$(_sc_disp "$p"); _sc_baseline "$p"
+    _sc_mark_all
     start=$(_sc_size "$(_sc_logfile server)")
     for ((i=1; i<=tries; i++)); do
         rig_key "$disp" "$qk"; sleep 2
         rig_key "$disp" space; sleep 1
         _sc_hold_button "$disp" 1 0.25
-        [ -z "$re" ] && { _sc_marked_row OK ""; return 0; }
+        [ -z "$re" ] && { _sc_close_row OK ""; return 0; }
         if _sc_poll "$cap" _sc_grep_from "$(_sc_logfile server)" "$start" "$re"; then
-            _sc_marked_row OK "server logged /$re/ on try $i"; return 0
+            _sc_close_row OK "server logged /$re/ on try $i"; return 0
         fi
     done
-    _sc_marked_row FAIL "no /$re/ in server.log after $tries tries (${cap}s each)"
+    _sc_close_row FAIL "no /$re/ in server.log after $tries tries (${cap}s each)"
 }
 # hidechat <p> — press the chat toggle until the client log's last chat-mode line is "Chat hidden" (KB-4).
 _scv_hidechat() {
@@ -483,9 +499,10 @@ _scv_hidechat() {
     local p=${1:-} disp log n before after t0
     _sc_need_client "$p" || return 1
     disp=$(_sc_disp "$p"); log=$SC_RUN/client-$p.log; _sc_baseline "$p"
+    _sc_mark_all
     for n in 1 2 3 4 5 6 7 8; do
         if [ "$(grep -oE 'Chat hidden|Chat visible|Chat appearing when needed' "$log" 2>/dev/null | tail -1)" = "Chat hidden" ]; then
-            sleep 0.5; _sc_marked_row OK "chat hidden after $((n-1)) press(es) of $RIG_CHAT_KEY"; return 0
+            sleep 0.5; _sc_close_row OK "chat hidden after $((n-1)) press(es) of $RIG_CHAT_KEY"; return 0
         fi
         before=$(grep -c "Switch chat mode" "$log" 2>/dev/null)
         rig_key "$disp" "$RIG_CHAT_KEY"
@@ -496,13 +513,13 @@ _scv_hidechat() {
             sleep 0.3
         done
     done
-    _sc_marked_row FAIL "client $p never logged 'Chat hidden' after 8 presses of $RIG_CHAT_KEY (set RIG_CHAT_KEY?)"
+    _sc_close_row FAIL "client $p never logged 'Chat hidden' after 8 presses of $RIG_CHAT_KEY (set RIG_CHAT_KEY?)"
 }
 
 # ================================================================================================
 # Setup verbs — need the server bridge's command channel (not available yet): SKIP, still mark
 # ================================================================================================
-_sc_bridge_stub() { _sc_marked_row SKIP "bridge: R3"; }
+_sc_bridge_stub() { _sc_mark_all; _sc_close_row SKIP "bridge: R3"; }
 _scv_console()        { _sc_begin console "$@"        || return 0; _sc_bridge_stub; }
 _scv_console_file()   { _sc_begin console-file "$@"   || return 0; _sc_bridge_stub; }
 _scv_console_object() { _sc_begin console-object "$@" || return 0; _sc_bridge_stub; }
@@ -513,13 +530,18 @@ _scv_probe()          { _sc_begin probe "$@"          || return 0; _sc_bridge_st
 # ================================================================================================
 # Waits and assertions
 # ================================================================================================
-# _sc_split_since <args>... — sets SC_SINCE (the --since mark, or '') and SC_ARGS (the rest).
+# _sc_split_since <args>... — sets SC_SINCE (the --since mark, or '') and SC_ARGS (the rest);
+# returns 1 when a --since has no mark name.
 _sc_split_since() {
     SC_SINCE=''; SC_ARGS=()
     while [ $# -gt 0 ]; do
-        if [ "$1" = --since ]; then SC_SINCE=${2:-}; shift 2 || shift; continue; fi
+        if [ "$1" = --since ]; then
+            [ -n "${2:-}" ] || return 1
+            SC_SINCE=$2; shift 2; continue
+        fi
         SC_ARGS+=("$1"); shift
     done
+    return 0
 }
 # _sc_window_match <logkey> <ERE> <cap> <what> — poll the window; PASS/FAIL row naming the window.
 _sc_window_match() {
@@ -540,7 +562,8 @@ _sc_window_match() {
 }
 _scv_wait() {
     _sc_begin wait "$@" || return 0
-    _sc_split_since "$@"; set -- "${SC_ARGS[@]+"${SC_ARGS[@]}"}"
+    _sc_split_since "$@" || { _sc_row FAIL "" "--since needs a mark name"; return 1; }
+    set -- "${SC_ARGS[@]+"${SC_ARGS[@]}"}"
     local src=${1:-} p
     case $src in
         server) [ -n "${2:-}" ] || { _sc_row FAIL "" "wait server: no ERE"; return 1; }
@@ -579,7 +602,8 @@ _sc_cmp() {   # _sc_cmp <a> <op> <b> — numeric comparison
 }
 _scv_assert() {
     _sc_begin assert "$@" || return 0
-    _sc_split_since "$@"; set -- "${SC_ARGS[@]+"${SC_ARGS[@]}"}"
+    _sc_split_since "$@" || { _sc_row FAIL "" "--since needs a mark name"; return 1; }
+    set -- "${SC_ARGS[@]+"${SC_ARGS[@]}"}"
     local kind=${1:-} p file c
     case $kind in
         server) [ -n "${2:-}" ] || { _sc_row FAIL "" "assert server: no ERE"; return 1; }
@@ -647,7 +671,7 @@ _scv_shot() {
     _sc_need_client "$p" || return 1
     out=$SC_RUN/shots/$name.png; mkdir -p "$SC_RUN/shots"
     if ! rig_grab_region "$(_sc_disp "$p")" "${crop:-FULL}" "$out" || [ ! -s "$out" ]; then
-        _sc_row FAIL "" "capture of $p's display failed"; return 1
+        _sc_row FAIL "" "capture of $p's display $(_sc_disp "$p") failed (ImageMagick import -window root)"; return 1
     fi
     printf '%s\t%s\n' "$name" "$(date +%s.%N)" >> "$SC_RUN/shots/captures.tsv"
     SC_SHOTROW[$name]=$SC_CUR_STEP
@@ -740,9 +764,10 @@ _sc_custom() {
     local name=$1; shift
     _sc_begin "$name" "$@" || return 0
     local step=$SC_CUR_STEP line=$SC_CUR_LINE desc=$SC_CUR_DESC rc=0
+    _sc_mark_all
     "verb_$name" "$@" || rc=$?
     SC_CUR_STEP=$step SC_CUR_LINE=$line SC_CUR_DESC=$desc
-    if [ "$rc" = 0 ]; then _sc_marked_row OK "verb_$name"; else _sc_marked_row FAIL "verb_$name returned $rc"; fi
+    if [ "$rc" = 0 ]; then _sc_close_row OK "verb_$name"; else _sc_close_row FAIL "verb_$name returned $rc"; fi
 }
 
 # _sc_define_verbs — define the verb names (child process only: several shadow shell builtins).
@@ -1040,6 +1065,7 @@ scenario_run() {
         return "$bad"
     fi
     if [ "$SC_KEEP_UP" = 1 ] && [ "${#dirs[@]}" -gt 1 ]; then echo "rig run: --keep-up takes exactly one scenario" >&2; return 64; fi
+    if [ "$SC_KEEP_UP" = 1 ] && [ "$retries" -gt 0 ]; then echo "rig run: --keep-up cannot be combined with --retry-failed (a retry tears the kept world down)" >&2; return 64; fi
 
     # The run-set dir.
     if [ -n "$out" ]; then
@@ -1172,6 +1198,22 @@ EOF
     assert json player/a.json 'd["login"]["name"] == "b"' >/dev/null; _check "json: false expression" "$SC_LAST_STATUS" FAIL
     assert json player/none.json 'True' >/dev/null;   _check "json: missing file" "$SC_LAST_STATUS" FAIL
     unset SC_DATA_DIR
+    assert server 'beta' 0 --since >/dev/null;        _check "window: trailing --since without a name fails" "$SC_LAST_STATUS" FAIL
+    # The implicit mark is taken when a verb starts acting: what the verb causes is inside the window.
+    out=$(
+        SC_BOOTED=([a]=1)
+        _sc_need_client() { return 0; }; _sc_baseline() { :; }
+        rig_key() { echo 'REPLY to key' >> "$SC_RUN/server.log"; }
+        ( sleep 0.5; echo 'EVENT during settle' >> "$SC_RUN/server.log" ) &
+        settle 1 "waiting for the event" >/dev/null
+        assert server 'EVENT during settle' 0 >/dev/null; printf '%s ' "$SC_LAST_STATUS"
+        key a Return >/dev/null
+        assert server 'REPLY to key' 0 >/dev/null; printf '%s ' "$SC_LAST_STATUS"
+        assert server 'EVENT during settle' 0 >/dev/null; printf '%s' "$SC_LAST_STATUS"
+    )
+    _check "window: settle does not mark; an input verb marks before it acts" "$out" "PASS PASS FAIL"
+    mark >/dev/null; : > "$SC_RUN/client-a.log"; echo 'after restart' >> "$SC_RUN/client-a.log"
+    assert client a 'after restart' 0 >/dev/null;     _check "window: a rewritten (shorter) log is read from 0" "$SC_LAST_STATUS" PASS
     console a 'journal x 10' >/dev/null;              _check "setup verbs stubbed" "$SC_LAST_STATUS" SKIP
     assert probe a nearby actor=b >/dev/null;         _check "probe assertions stubbed" "$SC_LAST_STATUS" SKIP
 
@@ -1190,7 +1232,7 @@ EOF
     # -- 5. verdict: FAIL counted, pair inputs need no reference, INFRA stops the rest --
     SC_ATTEMPT=1; SC_STRICT=1
     _sc_finalize >/dev/null
-    _check "verdict: failed assertions -> FAIL" "$(cat "$SC_RUN/RESULT")" "$(_sc_result_line FAIL 1 selftest 10 0 1)"
+    _check "verdict: failed assertions -> FAIL" "$(cat "$SC_RUN/RESULT")" "$(_sc_result_line FAIL 1 selftest 11 0 1)"
     SC_RUN=$t/run2; mkdir -p "$SC_RUN"; SC_RSTAT=(); SC_STEP=0; SC_FINAL=0; SC_SHOTROW=(); SC_PAIRIN=()
     SC_CUR_STEP=1; SC_STEP=1; SC_CUR_LINE=steps.sh:1; SC_CUR_DESC="shot a 10"; SC_SHOTROW[10]=1; _sc_row NO-REFERENCE "" "x" >/dev/null
     SC_CUR_STEP=2; SC_STEP=2; SC_CUR_LINE=steps.sh:2; SC_CUR_DESC="shot a 20"; SC_SHOTROW[20]=2; _sc_row NO-REFERENCE "" "x" >/dev/null
@@ -1211,6 +1253,25 @@ EOF
     _check "INFRA stop: statuses" "$(tail -n +2 "$SC_RUN/steps.tsv" | cut -f4 | tr '\n' ' ')" "FAIL SKIP SKIP SKIP SKIP "
     _check "INFRA stop: rows name steps.sh lines" "$(tail -n +2 "$SC_RUN/steps.tsv" | cut -f2 | tr '\n' ' ')" "steps.sh:1 steps.sh:2 steps.sh:3 steps.sh:4 steps.sh:5 "
     if (( SECONDS - t0 < 5 )); then _ok "INFRA stop: skipped steps do not run"; else _bad "INFRA stop: skipped steps ran ($((SECONDS-t0))s)"; fi
+
+    # A dead server or client stops the scenario at the next verb (INFRA), not after every cap.
+    local dead; sleep 0 & dead=$!; builtin wait "$dead"
+    out=$(
+        SC_RUN=$t/run4; mkdir -p "$SC_RUN"; SC_RSTAT=(); SC_STEP=0; SC_FINAL=0; SC_INFRA=''
+        : > "$SC_RUN/server.log"; RIG_SRV_STDOUT=$SC_RUN/server.log; RIG_SRV=$dead
+        printf 'assert server never 5\nassert server never 5\nnote x\n' > "$SC_DIR/steps.sh"
+        _sc_run_steps >/dev/null; _sc_finalize >/dev/null
+        printf '%s|%s' "$(tail -n +2 "$SC_RUN/steps.tsv" | cut -f4 | tr '\n' ' ')" "$(cut -d' ' -f2 "$SC_RUN/RESULT")"
+    )
+    _check "dead server: INFRA at the next verb" "$out" "FAIL SKIP SKIP |INFRA"
+    out=$(
+        SC_RUN=$t/run5; mkdir -p "$SC_RUN"; SC_RSTAT=(); SC_STEP=0; SC_FINAL=0; SC_INFRA=''
+        RIG_SRV=''; SC_BOOTED=([a]=1); RIG_CLI=$dead
+        printf 'key a Return\nassert server never 5\n' > "$SC_DIR/steps.sh"
+        _sc_run_steps >/dev/null; _sc_finalize >/dev/null
+        printf '%s|%s' "$(tail -n +2 "$SC_RUN/steps.tsv" | cut -f4 | tr '\n' ' ')" "$(cut -d' ' -f2 "$SC_RUN/RESULT")"
+    )
+    _check "dead client: INFRA, not FAIL" "$out" "FAIL SKIP |INFRA"
 
     # -- 6. dry-run: an external command in steps.sh is reported --
     mkdir -p "$t/s4"; printf 'PLAYERS=a\nCONTENT=example\n' > "$t/s4/scenario.conf"
