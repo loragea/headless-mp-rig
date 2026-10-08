@@ -451,9 +451,13 @@ _sc_argcheck() {
                             [ $# -ge 4 ] || { echo "assert probe: expected <p> <kind> <field><op><value>... (e.g. actor=b 'dist<400')"; return 1; }
                             for x in "${@:4}"; do _sc_ac_cond "$x" || return 1; done ;;
                     probe-delta) shift; _sc_ac_delta "$@" || return 1 ;;
+                    probe-count) _sc_ac_p "${2:-}" || return 1; _sc_ac_kind "${3:-}" "assert probe-count" || return 1
+                            case ${4:-} in =|'!='|'<'|'<='|'>'|'>=') ;; *) echo "assert probe-count: expected <p> <kind> <op> <n> [<field><op><value>...]; operator '${4:-}' is not one of = != < <= > >= (quote it: '>=')"; return 1;; esac
+                            [[ ${5:-} =~ ^[0-9]+$ ]] || { echo "assert probe-count: <n> '${5:-}' is not a count"; return 1; }
+                            for x in "${@:6}"; do _sc_ac_cond "$x" || return 1; done ;;
                     json)   [ -n "${2:-}" ] && [ -n "${3:-}" ] || { echo "assert json: expected <relpath> '<python expression>'"; return 1; }
                             _sc_ac_max "assert json" $# 3 ;;
-                    *) echo "assert: expected server|client|absent|count|probe|probe-delta|json, got '${1:-}'"; return 1 ;;
+                    *) echo "assert: expected server|client|absent|count|probe|probe-delta|probe-count|json, got '${1:-}'"; return 1 ;;
                 esac ;;
         shot)   _sc_ac_p "${1:-}" || return 1; [ -n "${2:-}" ] || { echo "shot: no name"; return 1; }
                 [ -z "${3:-}" ] || _sc_ac_g "$3" "shot crop" || return 1; _sc_ac_max shot $# 3 ;;
@@ -1016,6 +1020,23 @@ _sc_assert_probe() {
     if [ -z "$lines" ]; then _sc_row FAIL "" "seq $seq: no $kind line with $*: the request answered no $kind lines"
     else _sc_row FAIL "" "seq $seq: no $kind line with $* among $(grep -c . <<<"$lines") line(s): $(_sc_probe_quote "$lines")"; fi
 }
+# assert probe-count <p> <kind> <op> <n> [<cond>...] — the number of <kind> lines of the last request
+# answering <kind> that meet every condition, compared with <n>: absence (= 0) and exactly-one (= 1).
+_sc_assert_probe_count() {
+    local p=${1:-} kind=${2:-} op=${3:-} want=${4:-} lines line c n=0
+    local -a fields=()
+    shift 4
+    for c in "$@"; do _sc_probe_cond_parse "$c" && fields+=("$SC_C_FIELD"); done
+    _sc_probe_precheck "$p" "$kind" "${fields[@]+"${fields[@]}"}" || return 0
+    _sc_probe_pick "assert probe-count" "$p" "$kind" || return 1
+    lines=$(_sc_probe_lines "$p" "$kind" "$SC_PICK")
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        _sc_probe_line_ok "$line" "$@" && n=$((n + 1))
+    done <<<"$lines"
+    if _sc_probe_cmp "$n" "$op" "$want"; then _sc_row PASS "" "seq $SC_PICK: $n $kind line(s)${*:+ with $*}, $op $want"
+    else _sc_row FAIL "" "seq $SC_PICK: $n $kind line(s)${*:+ with $*}, wanted $op $want${lines:+: $(_sc_probe_quote "$lines")}"; fi
+}
 # assert probe-delta <p> <kind> <field> <op> <n> [<selector>...] [<seqA> <seqB>] — the field's value in
 # request B minus request A (default: the last two requests answering <kind>), compared with <n>. In
 # each request the first line meeting the selectors and holding the field is used.
@@ -1157,8 +1178,9 @@ _scv_assert() {
             else _sc_row FAIL "$k:0-$(_sc_size "$file")" "count('${1:-}')=$c in ${file##*/}, wanted $2 $3"; fi ;;
         probe)       _sc_assert_probe "${@:2}" ;;
         probe-delta) _sc_assert_probe_delta "${@:2}" ;;
+        probe-count) _sc_assert_probe_count "${@:2}" ;;
         json) _sc_assert_json "${2:-}" "${3:-}" ;;
-        *) _sc_row FAIL "" "assert: expected server|client|absent|count|probe|probe-delta|json, got '$kind'"; return 1 ;;
+        *) _sc_row FAIL "" "assert: expected server|client|absent|count|probe|probe-delta|probe-count|json, got '$kind'"; return 1 ;;
     esac
 }
 # assert json <relpath> '<python expression>' — d = the parsed document under the work copy's data/.
@@ -1896,7 +1918,7 @@ EOF
                 "echo \$P_TYPO|unset variable" "probe a bogus|not a probe kind" "assert probe a nearby|expected <p> <kind>" \
                 "assert probe a nearby dist<400|unquoted < or >" "assert probe-delta a stats fat x 1|operator 'x'" \
                 "assert probe-delta a stats fat '<' 0 7|two request seqs" "console-object a cell 12 disable|not <refnum>-<mpnum>" \
-                "wait probe a|no ERE" "console-file a setup/tab.console|tab.console:3: the command holds a tab"; do
+                "wait probe a|no ERE" "assert probe-count a nearby 1|operator '1'" "assert probe-count a nearby = x|is not a count" "console-file a setup/tab.console|tab.console:3: the command holds a tab"; do
         want=${case#*|}
         printf 'boot a\n%s\n' "${case%%|*}" > "$t/s4/steps.sh"
         out=$(cd "$t" && bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" 2>&1); rc=$?
@@ -1904,7 +1926,7 @@ EOF
         else _bad "dry-run rejects: ${case%%|*}" "rc=$rc $(tail -3 <<<"$out")"; fi
     done
     [ -e "$t/=" ] && _bad "dry-run: redirection escaped the scratch cwd"
-    printf 'boot a\nmark m1\nscroll a 1 none until server x 5 tries 2\nassert server --since m1 ok\nsettle 1 "why"\nprobe a dump\nassert probe a nearby actor=b '"'"'dist<400'"'"' anim~idle\nassert probe-delta a stats fat '"'"'<'"'"' -20 2 3\nconsole-object a "0, -7" 0-12 disable\n' > "$t/s4/steps.sh"
+    printf 'boot a\nmark m1\nscroll a 1 none until server x 5 tries 2\nassert server --since m1 ok\nsettle 1 "why"\nprobe a dump\nassert probe a nearby actor=b '"'"'dist<400'"'"' anim~idle\nassert probe-delta a stats fat '"'"'<'"'"' -20 2 3\nprobe a items\nassert probe-count a items = 0 obj=x\nconsole-object a "0, -7" 0-12 disable\n' > "$t/s4/steps.sh"
     if bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" >/dev/null 2>&1; then _ok "dry-run: known mark, scroll close key, settle reason, probe verbs"
     else _bad "dry-run: known mark, scroll close key, settle reason, probe verbs"; fi
 
@@ -2019,6 +2041,13 @@ scenario_selftest_probe() {
     assert probe-delta a stats fat '<' -5 >/dev/null
     _check "probe-delta: last two requests" "$SC_LAST_STATUS|${SC_RDET[SC_STEP]}" "PASS|fat: 60 (seq 9) -> 50 (seq 10), delta -10 < -5"
     assert probe-delta a stats fat '>' 0 >/dev/null;           _check "probe-delta: failing comparison" "$SC_LAST_STATUS" FAIL
+    assert probe-count a nearby = 1 'rec~^\$dynamic' >/dev/null; _check "probe-count: exactly one matching line" "$SC_LAST_STATUS" PASS
+    assert probe-count a nearby = 0 actor=zzz >/dev/null;       _check "probe-count: absence" "$SC_LAST_STATUS" PASS
+    assert probe-count a nearby '>=' 3 >/dev/null
+    case $SC_LAST_STATUS/${SC_RDET[SC_STEP]} in "FAIL/seq 8: 2 nearby line(s), wanted >= 3"*) _ok "probe-count: no conditions counts every line; FAIL names the count";;
+        *) _bad "probe-count: no conditions counts every line; FAIL names the count" "$SC_LAST_STATUS ${SC_RDET[SC_STEP]}";; esac
+    assert probe a nearby actor=b weapon=none >/dev/null
+    _check "assert probe: weapon needs cap equip -> SKIP" "$SC_LAST_STATUS|${SC_RDET[SC_STEP]}" "SKIP|probe: client a lacks cap 'equip' (caps=cell,stats,stance,nearby,anim)"
     assert probe-delta a stats fat = -10 hp=50 9 10 >/dev/null; _check "probe-delta: explicit seqs and a selector" "$SC_LAST_STATUS" PASS
     probe a dump >/dev/null
     assert probe a cell cell="Big Hall" >/dev/null; _check "assert probe: a dump answers every kind" "$SC_LAST_STATUS" PASS

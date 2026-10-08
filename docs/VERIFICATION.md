@@ -9,8 +9,9 @@ log gate beats a probe line, and a probe line beats a screenshot.
   screenshot, fatal to multiplayer).
 - **The client probe — what a client's engine holds.** With `PROBE=1` a read-only Lua player script
   in every client prints engine state on request (`probe <p> <kind>`, then `assert probe` /
-  `assert probe-delta`): the actors near the player with their distance, stance, animation and
-  health, the player's cell, stats, inventory, quests, topics, game time and weather
+  `assert probe-delta`, `assert probe-count`): the actors near the player with their position,
+  stance, animation, health and weapon, the items lying nearby, the player's cell, stats, inventory,
+  active effects, spells, factions, quests, topics, game time and weather
   ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md) §7).
 - **Screenshots — the rendering gate.** `lib/compare.sh` compares each checkpoint frame to a blessed
   reference with a per-image tolerance (**STATIC**), or a script gates a **DYNAMIC** frame pair on the

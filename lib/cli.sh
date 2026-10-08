@@ -390,7 +390,7 @@ _cli_explain_row() {
         probe)
             echo "    open: $r/probe-$kind.log (the probe's lines; a request's lines carry its seq=<n>)" ;;
         assert)
-            case $kind in probe|probe-delta)
+            case $kind in probe|probe-delta|probe-count)
                 read -r _ _ p _ <<<"$desc"
                 echo "    open: $r/probe-$p.log (the seq named above: grep 'seq=<n> ' to see the whole line set)" ;;
             esac

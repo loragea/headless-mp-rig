@@ -14,9 +14,11 @@
 # Setup      console <p> "<mwscript>"    console-file <p> setup/<f>.console     server <p> "<lua>"
 #            console-object <p> "<cell>" <refnum>-<mpnum> "<mwscript>"     save <p> | save cell "<cell>"
 #            (pushed by the server to a logged-in player; no bridge answer stops the run as INFRA)
-# Probe      probe <p> <cell|stats|quest|topics|inv|nearby|time|weather|dump>   (PROBE=1 in scenario.conf)
+# Probe      probe <p> <cell|stats|quest|topics|inv|nearby|items|effects|faction|spells|time|weather|dump>
+#            (PROBE=1 in scenario.conf)
 #            assert probe <p> <kind> <field><op><value>...   ops = != < <= > >= ~ (quote: 'dist<400')
 #            assert probe-delta <p> <kind> <field> <op> <n> [<cond>...]   (the last two requests)
+#            assert probe-count <p> <kind> <op> <n> [<cond>...]           (= 0 absent, = 1 exactly one)
 # Waits      wait server <ERE> [cap]     wait client <p> <ERE> [cap]     wait probe <p> <ERE> [cap]
 #            wait stable <p> <crop|FULL> [cap]
 # Asserts    assert server <ERE> [cap]   assert client <p> <ERE> [cap]   (log past the last mark)
