@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
-# rig — command-line front end of headless-mp-rig.
-#
-# Usage:
-#   bin/rig doctor     validate rig.conf and the host; every problem names the rig.conf key (or the
-#                      package) to fix. Exit 0 = a run can start, 1 = something must be fixed.
-#   bin/rig run <dir>... | --tag T | --all  [--out DIR] [--capture] [--strict-refs]
-#                      [--retry-failed N] [--dry-run] [--keep-up] [--keep-work]
-#                      run scenarios (docs/SCENARIO-FORMAT.md). Exit 0 pass, 1 fail, 2 regression,
-#                      3 infrastructure, 4 content missing (every scenario skipped).
-#   bin/rig help       this text
+# rig — command-line front end of headless-mp-rig. `bin/rig help` lists the commands; `bin/rig help
+# <command>` (or `bin/rig <command> --help`) explains one. The commands:
+#   doctor | list | new | lint | run | explain | rerun-failed | up | down | help
+# Exit codes: 0 ok, 1 fail, 2 regression, 3 infrastructure, 4 content missing, 64 usage error.
+# The scenario format, verbs and run directory: docs/SCENARIO-FORMAT.md. Quickstart: README.md.
 #
 # Config: lib/rig.sh loads ../rig.conf (or $RIG_CONF); a variable set in the environment wins over the
 # same key in the file, e.g. `RIG_BUILD=/other/build bin/rig doctor`.
@@ -16,15 +11,30 @@ set -uo pipefail
 DIR=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 # shellcheck source=../lib/rig.sh
 source "$DIR/../lib/rig.sh"
+# shellcheck source=../lib/scenario.sh
+source "$DIR/../lib/scenario.sh"
+# shellcheck source=../lib/cli.sh
+source "$DIR/../lib/cli.sh"
 
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
-
-case "${1:-help}" in
-    doctor)         shift; rig_doctor "$@"; exit $? ;;
-    run)            shift
-                    # shellcheck source=../lib/scenario.sh
-                    source "$DIR/../lib/scenario.sh"
-                    scenario_run "$@"; exit $? ;;
-    help|-h|--help) usage; exit 0 ;;
-    *)              echo "rig: unknown command '$1'" >&2; usage >&2; exit 2 ;;
+cmd=${1:-help}; [ $# -gt 0 ] && shift
+case $cmd in
+    doctor)
+        case ${1:-} in -h|--help) rig_cli_help doctor; exit 0;; '') ;; *) _cli_usage_err doctor "takes no arguments"; exit 64;; esac
+        rig_doctor; exit $? ;;
+    run)
+        dry=0; for a in "$@"; do [ "$a" = --dry-run ] && dry=1; case $a in -h|--help) dry=1;; esac; done
+        if [ "$dry" = 0 ] && pgrep -x "$RIG_SERVER_BIN" >/dev/null 2>&1; then
+            echo "rig run: a $RIG_SERVER_BIN is already running (a world from bin/rig up, or a killed run); stop it with: bin/rig down" >&2
+            exit 3
+        fi
+        scenario_run "$@"; exit $? ;;
+    list)           rig_cli_list "$@"; exit $? ;;
+    new)            rig_cli_new "$@"; exit $? ;;
+    lint)           rig_cli_lint "$@"; exit $? ;;
+    explain)        rig_cli_explain "$@"; exit $? ;;
+    rerun-failed)   rig_cli_rerun_failed "$@"; exit $? ;;
+    up)             rig_cli_up "$@"; exit $? ;;
+    down)           rig_cli_down "$@"; exit $? ;;
+    help|-h|--help) rig_cli_help "$@"; exit $? ;;
+    *)              echo "rig: unknown command '$cmd'" >&2; rig_cli_help >&2; exit 64 ;;
 esac

@@ -948,7 +948,7 @@ _sc_finalize_skip() {
 _sc_run_steps() {
     SC_PHASE=steps
     # shellcheck source=/dev/null
-    builtin source "$SC_DIR/steps.sh"
+    builtin source "${SC_STEPS_FILE:-$SC_DIR/steps.sh}"
     SC_PHASE='done'
 }
 
@@ -965,7 +965,7 @@ _sc_on_exit() {
         _sc_finalize
     fi
     if [ "$SC_KEEP_UP" = 1 ] && [ -n "${RIG_SRV:-}" ]; then
-        _sc_say "kept up: server pid ${RIG_SRV:-} and the clients keep running; tear down with: pkill -x $RIG_SERVER_BIN; pkill -x $RIG_CLIENT_BIN; pkill -x Xvfb"
+        _sc_say "kept up: server pid ${RIG_SRV:-} and the clients keep running; stop them with: bin/rig down"
     else
         rig_cleanup 2>/dev/null
     fi
@@ -988,7 +988,8 @@ _sc_run_one() {
         SC_STEP=1; SC_CUR_STEP=1; SC_CUR_LINE=scenario.conf; SC_CUR_DESC=conf
         _sc_infra "${SC_CONF_ERR//$'\n'/; }"; _sc_finalize; exit
     fi
-    if [ ! -f "$SC_DIR/steps.sh" ] || ! msg=$(bash -n "$SC_DIR/steps.sh" 2>&1); then
+    # SC_STEPS_FILE (internal; bin/rig up) runs another choreography with this scenario's conf and fixture.
+    if [ ! -f "${SC_STEPS_FILE:-$SC_DIR/steps.sh}" ] || ! msg=$(bash -n "${SC_STEPS_FILE:-$SC_DIR/steps.sh}" 2>&1); then
         SC_STEP=1; SC_CUR_STEP=1; SC_CUR_LINE=steps.sh; SC_CUR_DESC="bash -n"
         _sc_infra "steps.sh: ${msg:-missing}"; _sc_finalize; exit
     fi
@@ -1248,6 +1249,7 @@ scenario_run() {
     echo "---- RESULTS ($RIG_SET_DIR/RESULTS)"
     cat "$RIG_SET_DIR/RESULTS"
     echo "rig run: exit $code"
+    [ "$code" = 0 ] || [ "$code" = 4 ] || echo "rig run: what failed and which file to open: bin/rig explain $RIG_SET_DIR"
     return "$code"
 }
 
