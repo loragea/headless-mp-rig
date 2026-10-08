@@ -1837,7 +1837,12 @@ EOF
     )
     _check "dead client: INFRA, not FAIL" "$out" "FAIL SKIP |INFRA"
 
-    # -- 6. dry-run: an external command in steps.sh is reported --
+    # -- 6. client probe lines and the server bridge's file protocol (a fake bridge; no game) --
+    out=$(scenario_selftest_probe "$t" 2>&1)
+    echo "$out"
+    fails=$((fails + $(grep -c '^  FAIL' <<<"$out")))
+
+    # -- 7. dry-run: an external command in steps.sh is reported --
     mkdir -p "$t/s4"; printf 'PLAYERS=a\nCONTENT=example\n' > "$t/s4/scenario.conf"
     printf 'boot a\nlogin a\ngrep x y\nassert server ok\n' > "$t/s4/steps.sh"
     out=$(bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" 2>&1); rc=$?
@@ -1849,7 +1854,10 @@ EOF
     for case in "assert count server x >= 2|wrote '='" "shot a s1 12x12|is not WxH+X+Y" "settle 3|give the reason" \
                 "assert server ok --since m9|no earlier 'mark m9'" "wait --since m client zz foo|unknown player 'zz'" \
                 "assert server|no ERE" "assert json player/a.json d[0] == 1|at most 3" "scroll a 1 until server x|scroll: expected" \
-                "echo \$P_TYPO|unset variable"; do
+                "echo \$P_TYPO|unset variable" "probe a bogus|not a probe kind" "assert probe a nearby|expected <p> <kind>" \
+                "assert probe a nearby dist<400|unquoted < or >" "assert probe-delta a stats fat x 1|operator 'x'" \
+                "assert probe-delta a stats fat '<' 0 7|two request seqs" "console-object a cell 12 disable|not <refnum>-<mpnum>" \
+                "wait probe a|no ERE"; do
         want=${case#*|}
         printf 'boot a\n%s\n' "${case%%|*}" > "$t/s4/steps.sh"
         out=$(cd "$t" && bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" 2>&1); rc=$?
@@ -1857,12 +1865,132 @@ EOF
         else _bad "dry-run rejects: ${case%%|*}" "rc=$rc $(tail -3 <<<"$out")"; fi
     done
     [ -e "$t/=" ] && _bad "dry-run: redirection escaped the scratch cwd"
-    printf 'boot a\nmark m1\nscroll a 1 none until server x 5 tries 2\nassert server --since m1 ok\nsettle 1 "why"\n' > "$t/s4/steps.sh"
-    if bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" >/dev/null 2>&1; then _ok "dry-run: known mark, scroll close key, settle reason"
-    else _bad "dry-run: known mark, scroll close key, settle reason"; fi
+    printf 'boot a\nmark m1\nscroll a 1 none until server x 5 tries 2\nassert server --since m1 ok\nsettle 1 "why"\nprobe a dump\nassert probe a nearby actor=b '"'"'dist<400'"'"' anim~idle\nassert probe-delta a stats fat '"'"'<'"'"' -20 2 3\nconsole-object a "0, -7" 0-12 disable\n' > "$t/s4/steps.sh"
+    if bash "$_SC_LIB_DIR/scenario.sh" _dry-run "$t/s4" >/dev/null 2>&1; then _ok "dry-run: known mark, scroll close key, settle reason, probe verbs"
+    else _bad "dry-run: known mark, scroll close key, settle reason, probe verbs"; fi
 
     rm -rf "$t"
     echo "selftest done (fails=$fails)"
+    return "$fails"
+}
+
+# scenario_selftest_probe <tmpdir> — the probe and bridge cases of the selftest, in their own process
+# state (called in a subshell). A background fake bridge answers the runner's command files the way
+# overlay/scripts/custom/rig-bridge.lua does and, for probe requests, appends the lines the client
+# probe would print to the client log.
+scenario_selftest_probe() {
+    local t=$1 out srv cli fb dir pre=$'L@0x1[scripts/rig/probe.lua]:\t'
+    local -i fails=0
+    _ok()  { echo "  ok   [$1]"; }
+    _bad() { echo "  FAIL [$1] ${2:-}"; fails=$((fails+1)); }
+    _check() { if [ "$2" = "$3" ]; then _ok "$1"; else _bad "$1" "got '$2' want '$3'"; fi; }
+    SC_RUN=$t/run7; mkdir -p "$SC_RUN/bridge" "$t/s7/setup"; SC_DIR=$t/s7; SC_NAME=selftest
+    SC_RSTAT=(); SC_STEP=0; SC_FINAL=0; SC_INFRA=''; SC_OFF=(); SC_NAMED=(); SC_DRY=0
+    SC_PLAYERS=(a b); SC_SLOT=([a]=1 [b]=2); PROBE=1; RIG_BRIDGE_CAP=2; RIG_PROBE_CAP=2
+    sleep 120 & srv=$!; sleep 120 & cli=$!
+    RIG_SRV=$srv RIG_CLI=$cli RIG_CLI2=$cli
+    SC_BOOTED=([a]=1 [b]=1); SC_IN=([a]=1 [b]=1)
+    : > "$SC_RUN/server.log"; RIG_SRV_STDOUT=$SC_RUN/server.log
+    rig_grab_region() { : > "$3"; }
+    _sc_define_verbs
+
+    # Probe-log sync: complete [rigprobe:*] lines only, the print prefix dropped, partial line deferred.
+    printf 'noise line\n%s[rigprobe:ready] p=a t=1 seq=0 probe=1 version=1 caps=cell,stats,stance,nearby,anim\n%s[rigprobe:stats] p=a t=2' \
+        "$pre" "$pre" > "$SC_RUN/client-a.log"
+    printf '%s[rigprobe:ready] p=b t=1 seq=0 probe=1 version=1 caps=cell,stats\n' "$pre" > "$SC_RUN/client-b.log"
+    _sc_probe_sync a
+    _check "probe log: complete lines only" "$(wc -l < "$SC_RUN/probe-a.log")" 1
+    printf ' seq=0 hp=5\n' >> "$SC_RUN/client-a.log"
+    _sc_probe_sync a
+    _check "probe log: a partial line is taken once complete" "$(tail -1 "$SC_RUN/probe-a.log")" "[rigprobe:stats] p=a t=2 seq=0 hp=5"
+    _check "probe: caps from the ready line" "$(_sc_probe_caps a)" "cell,stats,stance,nearby,anim"
+    _sc_mark_all
+    printf '%s[rigprobe:stats] p=a t=7 seq=0 hp=4\n' "$pre" >> "$SC_RUN/client-a.log"
+    wait probe a 'rigprobe:stats\] .*hp=4' 1 >/dev/null; _check "wait probe: a line after the mark" "$SC_LAST_STATUS" PASS
+    wait probe a 'rigprobe:stats\] .*hp=5' 0 >/dev/null; _check "wait probe: a line before the mark" "$SC_LAST_STATUS" FAIL
+
+    # The fake bridge: answers cmd-<seq>.meta in seq order.
+    dir=$SC_RUN/bridge
+    (
+        n=1
+        while :; do
+            if [ -f "$dir/cmd-$n.meta" ]; then
+                IFS=$'\t' read -r verb who arg _ < "$dir/cmd-$n.meta"
+                cl=$SC_RUN/client-$who.log; ok=1; det="sent to pid 0"
+                case $verb in
+                    probe)
+                        case $arg in
+                            nearby) printf '%s[rigprobe:nearby] p=%s t=9 seq=%s actor=b rec=$dynamic2 dist=256 kind=npc anim=idle hp=50\n' "$pre" "$who" "$n" >> "$cl"
+                                    printf '%s[rigprobe:nearby] p=%s t=9 seq=%s obj=door_01 name="Old Door" kind=door dist=900\n' "$pre" "$who" "$n" >> "$cl"
+                                    printf '%s[rigprobe:done] p=%s t=9 seq=%s kind=nearby lines=2\n' "$pre" "$who" "$n" >> "$cl" ;;
+                            stats)  printf '%s[rigprobe:stats] p=%s t=9 seq=%s hp=50 fat=%s\n' "$pre" "$who" "$n" "$((150 - 10 * n))" >> "$cl"
+                                    printf '%s[rigprobe:done] p=%s t=9 seq=%s kind=stats lines=1\n' "$pre" "$who" "$n" >> "$cl" ;;
+                            dump)   printf '%s[rigprobe:cell] p=%s t=9 seq=%s cell="Big Hall" x=1\n' "$pre" "$who" "$n" >> "$cl"
+                                    printf '%s[rigprobe:done] p=%s t=9 seq=%s kind=dump lines=1 missing=weather\n' "$pre" "$who" "$n" >> "$cl" ;;
+                            quest)  ;;      # a client that never answers
+                        esac ;;
+                    console) [ "$arg" = refuse ] && { ok=0; det="player $who is not logged in"; } ;;
+                    lua) [ -f "$dir/cmd-$n.lua" ] && det="returned $(cat "$dir/cmd-$n.lua")" ;;
+                esac
+                if [ "$ok" = 1 ]; then echo "$det" > "$dir/done-$n"; else echo "$det" > "$dir/err-$n"; fi
+                n=$((n + 1))
+            fi
+            sleep 0.1
+        done
+    ) &
+    fb=$!
+
+    console a 'ModCurrentFatigue -50' >/dev/null
+    _check "bridge: console -> OK with the bridge's answer" "$SC_LAST_STATUS|${SC_RDET[SC_STEP]}" "OK|bridge 1: sent to pid 0"
+    _check "bridge: the command file (tab-separated, renamed into place)" "$(cat "$dir/cmd-1.meta")" $'console\ta\tModCurrentFatigue -50'
+    if compgen -G "$dir/.cmd-*" >/dev/null; then _bad "bridge: no temp file left"; else _ok "bridge: no temp file left"; fi
+    server a 'return player.accountName' >/dev/null
+    _check "bridge: server <p> <lua> -> body file + answer" "$SC_LAST_STATUS|$(cat "$dir/cmd-2.lua")|$(cut -f1,2 "$dir/cmd-2.meta")" $'OK|return player.accountName|lua\ta'
+    console a refuse >/dev/null
+    _check "bridge: err-<seq> -> FAIL naming the reason" "$SC_LAST_STATUS|${SC_RDET[SC_STEP]}" "FAIL|bridge 3 refused: player a is not logged in"
+    printf '# setup\n\nset x to 1\nset y to 2\n' > "$SC_DIR/setup/two.console"
+    console-file a setup/two.console >/dev/null
+    _check "bridge: console-file sends each command line" "$SC_LAST_STATUS|${SC_RDET[SC_STEP]}" "OK|2 command(s) from setup/two.console (bridge 4-5)"
+    save a >/dev/null; save cell "0, -7" >/dev/null
+    _check "bridge: save cell has no player" "$(cat "$dir/cmd-7.meta")" $'savecell\t-\t0, -7'
+
+    # Probe requests: the seq the bridge assigned is the seq the probe echoes.
+    probe a nearby >/dev/null
+    _check "probe: request answered by its seq" "$SC_LAST_STATUS|${SC_RDET[SC_STEP]}" "OK|seq 8: 2 line(s) in probe-a.log"
+    assert probe a nearby actor=b 'dist<400' 'anim~^idle' >/dev/null; _check "assert probe: all conditions on one line" "$SC_LAST_STATUS" PASS
+    assert probe a nearby actor=b 'dist>400' >/dev/null;              _check "assert probe: a failing comparison" "$SC_LAST_STATUS" FAIL
+    assert probe a nearby name="Old Door" kind=door >/dev/null;       _check "assert probe: a quoted value" "$SC_LAST_STATUS" PASS
+    assert probe a nearby actor=zzz >/dev/null
+    case ${SC_RDET[SC_STEP]} in *"seq 8: no nearby line with actor=zzz among 2 line(s): actor=b"*) _ok "assert probe: FAIL quotes the request's line set";;
+        *) _bad "assert probe: FAIL quotes the request's line set" "${SC_RDET[SC_STEP]}";; esac
+    printf '%s[rigprobe:nearby] p=a t=9 seq=0 actor=zzz dist=1\n' "$pre" >> "$SC_RUN/client-a.log"
+    assert probe a nearby actor=zzz >/dev/null;   _check "assert probe: heartbeat lines (seq=0) are not read" "$SC_LAST_STATUS" FAIL
+    assert probe a nearby 'lock=0' >/dev/null
+    _check "assert probe: a missing field cap -> SKIP naming it" "$SC_LAST_STATUS|${SC_RDET[SC_STEP]}" "SKIP|probe: client a lacks cap 'lock' (caps=cell,stats,stance,nearby,anim)"
+    assert probe a weather weather=clear >/dev/null
+    _check "assert probe: a missing kind cap -> SKIP naming it" "$SC_LAST_STATUS|${SC_RDET[SC_STEP]}" "SKIP|probe: client a lacks cap 'weather' (caps=cell,stats,stance,nearby,anim)"
+    assert probe b cell cell=x >/dev/null
+    case ${SC_RDET[SC_STEP]} in *"no 'probe b cell'"*) _ok "assert probe: no request before it -> FAIL";; *) _bad "assert probe: no request before it -> FAIL" "${SC_RDET[SC_STEP]}";; esac
+    probe a stats >/dev/null; probe a stats >/dev/null
+    assert probe-delta a stats fat '<' -5 >/dev/null
+    _check "probe-delta: last two requests" "$SC_LAST_STATUS|${SC_RDET[SC_STEP]}" "PASS|fat: 60 (seq 9) -> 50 (seq 10), delta -10 < -5"
+    assert probe-delta a stats fat '>' 0 >/dev/null;           _check "probe-delta: failing comparison" "$SC_LAST_STATUS" FAIL
+    assert probe-delta a stats fat = -10 hp=50 9 10 >/dev/null; _check "probe-delta: explicit seqs and a selector" "$SC_LAST_STATUS" PASS
+    probe a dump >/dev/null
+    assert probe a cell cell="Big Hall" >/dev/null; _check "assert probe: a dump answers every kind" "$SC_LAST_STATUS" PASS
+    _check "probe: missing caps reported on the row" "${SC_RDET[SC_STEP-1]}" "seq 11: 1 line(s) in probe-a.log; not available on this client: weather"
+    probe a quest >/dev/null
+    case $SC_LAST_STATUS/${SC_RDET[SC_STEP]} in "FAIL/"*"did not answer seq 12"*) _ok "probe: a silent client -> FAIL naming the seq";;
+        *) _bad "probe: a silent client -> FAIL naming the seq" "$SC_LAST_STATUS ${SC_RDET[SC_STEP]}";; esac
+    checkpoint c1 >/dev/null
+    _check "checkpoint: probe dumps by seq" "$SC_LAST_STATUS|$(grep -c 'seq=13 ' "$SC_RUN/checkpoints/c1/a.probe")|$(grep -c 'seq=14 ' "$SC_RUN/checkpoints/c1/b.probe")" "OK|2|2"
+
+    kill "$fb" 2>/dev/null; builtin wait "$fb" 2>/dev/null
+    local t0=$SECONDS
+    console a 'x' >/dev/null; note after >/dev/null
+    _check "bridge: no answer -> INFRA, later steps SKIP" "$(_sc_row_text $((SC_STEP-1)) | cut -f4,7 | cut -c1-40)|$SC_LAST_STATUS" $'FAIL\tINFRA: the server bridge did not an|SKIP'
+    if (( SECONDS - t0 <= RIG_BRIDGE_CAP + 2 )); then _ok "bridge: INFRA within RIG_BRIDGE_CAP"; else _bad "bridge: INFRA within RIG_BRIDGE_CAP" "$((SECONDS - t0))s"; fi
+    kill "$srv" "$cli" 2>/dev/null
     return "$fails"
 }
 
