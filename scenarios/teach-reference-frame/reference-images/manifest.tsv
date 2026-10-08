@@ -1,0 +1,2 @@
+# name	metric	threshold	fuzz	description
+20-a-noon-view	RMSE	0.011	-	empty floor at noon, clear weather, chat hidden; 3 runs agree, differences are subpixel grid shifts [blessed 2026-10-08 build sha256:6f24c4e7bf7182c4]
