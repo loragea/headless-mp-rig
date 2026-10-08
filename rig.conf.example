@@ -61,6 +61,8 @@ RIG_CONTENT_example_FILES="template.omwgame"
 # RIG_SCENARIOS=$HOME/headless-mp-rig/scenarios
 # A label for your build, recorded in each run's env.txt. Default: sha256 prefix of the client binary.
 # RIG_BUILD_ID=
+# Seconds of the CPU-busy sample written to each run's load.txt at start and end (0 = no sample).
+# RIG_LOAD_SAMPLE=0.5
 
 # --- Headless environment ---------------------------------------------------------------------
 # One Xvfb display per client (see docs/WRITING-SCENARIOS.md "one display per client"). The window

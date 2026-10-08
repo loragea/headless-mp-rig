@@ -27,6 +27,8 @@ jobs:
         run: lib/logcheck.sh selftest
       - name: Selftest lib/scenario.sh
         run: lib/scenario.sh selftest
+      - name: Selftest lib/stats.sh
+        run: lib/stats.sh selftest
       - name: Dry-run the example scenario
         run: bin/rig run --dry-run scenarios/example
       - name: Lint the example scenario

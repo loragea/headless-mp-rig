@@ -100,6 +100,7 @@ lib/rig.sh           the rig: run dirs, CoreScripts work copy, boot server+clien
                      input, event-gated waits, capture
 lib/scenario.sh      the runner: conf parser, verbs, log windows, verdict, run sets (+ selftest)
 lib/cli.sh           the authoring and diagnosis subcommands of bin/rig
+lib/stats.sh         host load recording (load.txt) (+ selftest)
 lib/compare.sh       screenshot regression compare (magick, per-image tolerance) — library + CLI + selftest
 lib/logcheck.sh      log event-signature compare (masked, ordered) — library + CLI + selftest
 overlay/             the rig's server-side bridge, layered into every CoreScripts work copy: anchor log
@@ -132,7 +133,7 @@ docs/                the manuals (below)
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules and how to add a capability or recipe.
-CI runs shell lint, the three library selftests and `bin/rig lint` on the example and on a scaffolded
+CI runs shell lint, the four library selftests and `bin/rig lint` on the example and on a scaffolded
 scenario; none of it needs a game binary.
 
 ## License

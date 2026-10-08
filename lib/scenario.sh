@@ -30,6 +30,10 @@ if ! declare -F check_log >/dev/null; then
     # shellcheck source=logcheck.sh
     source "$_SC_LIB_DIR/logcheck.sh"
 fi
+if ! declare -F rig_load_snapshot >/dev/null; then
+    # shellcheck source=stats.sh
+    source "$_SC_LIB_DIR/stats.sh"
+fi
 
 # The server-log error lines that must never appear. A constant, not a default vocabulary: a scenario
 # uses it in `assert absent server "$RIG_TRIPWIRES"` and in its LOG_MARKERS.
@@ -1804,6 +1808,7 @@ scenario_run() {
         RIG_SET_DIR=$RIG_RUN_DIR; RIG_RUN_DIR=''
     fi
     : > "$RIG_SET_DIR/RESULTS"
+    rig_load_snapshot "$RIG_SET_DIR/load.txt" start
     export RIG_SET_DIR SC_CAPTURE SC_STRICT SC_KEEP_UP RIG_KEEP_WORK
     echo "rig run: ${#dirs[@]} scenario(s) -> $RIG_SET_DIR"
     local booted_before=0
@@ -1816,7 +1821,9 @@ scenario_run() {
         while true; do
             [ "$booted_before" = 1 ] && rig_clean_slate
             code=0
+            mkdir -p "$sdir" && rig_load_snapshot "$sdir/load.txt" start
             SC_ATTEMPT=$attempt bash "$_SC_LIB_DIR/scenario.sh" _run-one "$d" "$sdir" 3>&1 || code=$?
+            rig_load_snapshot "$sdir/load.txt" end
             line=$(head -1 "$sdir/RESULT" 2>/dev/null)
             if [[ $line =~ ^RESULT\ [A-Z-]+\ ([0-9])\  ]]; then code=${BASH_REMATCH[1]}
             else line=$(_sc_result_line INFRA 3 "$name" 1 0 "$attempt"); code=3; echo "$line" > "$sdir/RESULT"; fi
@@ -1836,6 +1843,7 @@ scenario_run() {
         codes+=("$code")
     done
     code=$(_sc_aggregate "${codes[@]}")
+    rig_load_snapshot "$RIG_SET_DIR/load.txt" end
     echo "---- RESULTS ($RIG_SET_DIR/RESULTS)"
     cat "$RIG_SET_DIR/RESULTS"
     echo "rig run: exit $code"

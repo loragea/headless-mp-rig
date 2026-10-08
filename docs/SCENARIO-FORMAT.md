@@ -248,11 +248,13 @@ RESULT <status> <code> <scenario> <fails> <regressions> <attempts>
 ```
 $RIG_RUNS/<YYYYmmdd-HHMMSS>-<name|set>/     (or --out)
   RESULTS                    one RESULT line per scenario
+  load.txt                   host load at the start and end of the run set (below)
   <scenario>/
     run.log                  every step stamped [t+Ns] steps.sh:<line>, plus the rig's notes
     steps.tsv                step  line  verb+args  status  t+s  offsets  detail
     RESULT                   the scenario's RESULT line
     env.txt                  RIG_* values, rig commit, CoreScripts commit, build id
+    load.txt                 host load at the start and end of this attempt (below)
     server.log               server stdout
     server/                  config/openmw/tes3mp-server.cfg (run-scoped) and data/
     client-<p>.log           each client's stdout
@@ -272,6 +274,20 @@ $RIG_RUNS/<YYYYmmdd-HHMMSS>-<name|set>/     (or --out)
 `steps.tsv` status is one of `PASS FAIL OK SKIP UNBLESSED NO-REFERENCE REGRESSION`. The offsets
 column holds `log:start-end` for the window an assertion searched, and `log:offset` for each log
 after a mark.
+
+`load.txt` is `key=value` lines, written by the runner around every run set and every attempt (a
+retried attempt's file moves into `attempt-<k>/` with the rest of it). It records load; it never
+blocks or fails a run.
+
+| Key | Value |
+|---|---|
+| `cores` | online CPUs (`nproc`) |
+| `start_epoch`, `end_epoch` | Unix time |
+| `start_loadavg`, `end_loadavg` | the 1-, 5- and 15-minute load averages (`/proc/loadavg`) |
+| `start_busy`, `end_busy` | % of all cores busy over a `RIG_LOAD_SAMPLE`-second sample of `/proc/stat` (default 0.5; `0` turns the samples off and writes `-`) |
+| `start_cpu` | the `/proc/stat` busy and total ticks at the start (input of `run_busy`) |
+| `duration` | seconds from start to end |
+| `run_busy` | % of all cores busy from start to end, the run's own server and clients included |
 
 ## 6. Geometry contract
 
