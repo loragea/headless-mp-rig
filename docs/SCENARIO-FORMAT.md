@@ -1,4 +1,4 @@
-# Scenario format — the directory, `scenario.conf` keys, the `steps.sh` verbs, exit codes and the run dir
+# Scenario format — the directory, `scenario.conf` keys, the `steps.sh` verbs, exit codes, the run dir, the client probe and the server bridge
 Read when: writing or reading a scenario that `bin/rig run` executes, or a tool that consumes its results.
 
 A scenario is a directory. `bin/rig run <dir>` boots a dedicated server and one client per player,
@@ -13,7 +13,7 @@ executes `steps.sh` verb by verb, and writes one verdict. This file is the contr
   steps.sh               REQUIRED  the choreography: verbs only (§3)
   hooks.sh               optional  bash; each function verb_<name>() becomes a verb <name>
   README.md              optional  what it proves and which regression it guards
-  setup/*.console        optional  console-command files, one command per line
+  setup/*.console        optional  console-command files for console-file, one command per line
   overlay/               optional  CoreScripts overlay tree (OVERLAY=); <file>.append lines are appended
   player/ cell/ world/ map/ recordstore/ custom/   optional  the fixture: server state the run resumes
   reference-images/      optional  blessed frames + manifest.tsv (docs/VERIFICATION.md)
@@ -35,7 +35,7 @@ outside this list fails, except `P_<NAME>` (upper case, digits, `_`).
 | `CONTENT` | a content profile from `rig.conf` (`RIG_CONTENT_<name>_*`) | required |
 | `FIXTURE` | server state to resume: a dir holding the six state subdirs; `.` = this dir, `-` = blank state | `.` |
 | `OVERLAY` | CoreScripts overlay dir, applied after the rig's own `overlay/` | none |
-| `PROBE` | `1` = load the client probe (not available yet; ignored with a note) | `0` |
+| `PROBE` | `1` = load the client probe (§7) in every client: the probe verbs, `probe-<p>.log`, the probe's boot milestone; needs an OpenMW ≥ 0.48 client (Lua player scripts) | `0` |
 | `SETTINGS` | a client `settings.cfg` seeded into every client profile | none |
 | `LOG_MARKERS` | ERE vocabulary for `signature`; may reference `$RIG_TRIPWIRES` | `lib/logcheck.sh` default |
 | `COST` | approximate minutes on software GL | — |
@@ -61,23 +61,28 @@ is one row in `steps.tsv` carrying `steps.sh:<line>`. Things the shell will not 
 - Verbs are not conditions: a `FAIL` row counts even inside an `if`.
 - The fixture the players resume comes from a played session: [WRITING-SCENARIOS.md](WRITING-SCENARIOS.md) §1–2.
 - The only server-log lines the rig itself guarantees on every fork are its bridge's:
-  `[rig-bridge] loaded; data path …`, `[rig-bridge] player <p> in (pid N)`, `… out (pid N)`.
+  `[rig-bridge] loaded; data path …`, `[rig-bridge] commands from <dir>`,
+  `[rig-bridge] player <p> in (pid N)`, `… out (pid N)`, and per setup command
+  `[rig-bridge] <seq> <verb> <p>: <args>` then `[rig-bridge] <seq> done: …` or `… error: …`.
   Everything else is your build's and your scripts' logging.
 
-`bin/rig lint <dir>` checks all of this without booting: the conf keys, every verb's arguments, an
-external command or redirection, a `--since` without an earlier `mark`, and shellcheck.
+`bin/rig lint <dir>` checks all of this without booting: the conf keys, every verb's arguments
+(probe kinds and conditions included), an external command or redirection (an unquoted `<` in
+`dist<400` too), a `--since` without an earlier `mark`, and shellcheck.
 
 ### 3.1 Log windows
 
-The runner keeps a byte offset per log (server, each client). **Before** a lifecycle, input, setup or
-custom verb acts, it records the current end of every log: an **implicit mark**. A `wait` or `assert`
-after the verb therefore sees everything the verb caused. `settle`, `wiggle`, `wait`, `assert`,
-`shot`, `pair`, `signature`, `checkpoint`, `note` and `artifact` never move it. `boot` marks after
+The runner keeps a byte offset per log (server, each client and, with `PROBE=1`, each probe log
+`probe-<p>`). **Before** a lifecycle, input, setup or custom verb acts, it records the current end of
+every log: an **implicit mark**. A `wait` or `assert` after the verb therefore sees everything the
+verb caused. `settle`, `wiggle`, `wait`, `assert`, `probe`, `shot`, `pair`, `signature`,
+`checkpoint`, `note` and `artifact` never move it: `probe` is an observation, so an assert on a line
+the previous verb caused still sees it after a `probe`. `boot` marks after
 its clients start and before it waits for them; a server that `boot` starts is read from its first
 line. `mark [name]` moves the mark explicitly and names the point; the name `start` is predefined
 (offset 0 everywhere). A log that is shorter than its offset (a client restarted) is read from 0.
 
-`wait server|client` and `assert server|client` match **only past the last mark**; `--since <name>`
+`wait server|client|probe` and `assert server|client` match **only past the last mark**; `--since <name>`
 (anywhere in the arguments) widens the window to a named mark, and a `--since` without a name fails.
 `assert count` and `assert absent` read the whole log. Matching is `grep -E`, case-sensitive.
 
@@ -100,7 +105,7 @@ Use it only for lines that can occur once per run.
 
 | Verb | Effect |
 |---|---|
-| `boot <p>…` | start the server (first call), one display and client per player; wait for each client's connection (cap `RIG_BOOT_CAP`), then its boot milestone: `Sending ID_PLAYER_MAP` in the client log, or a rendered, settled frame on its display (cap `RIG_WORLD_LOAD`), then `RIG_BOOT_SETTLE` |
+| `boot <p>…` | start the server (first call), one display and client per player; wait for each client's connection (cap `RIG_BOOT_CAP`), then its boot milestone (cap `RIG_WORLD_LOAD`), then `RIG_BOOT_SETTLE`. The milestone is the probe's `[rigprobe:ready]` line with `PROBE=1` (printed on the first frame the world simulation runs); otherwise `Sending ID_PLAYER_MAP` in the client log, or a rendered, settled frame on its display. A milestone that does not arrive is noted and the boot proceeds |
 | `login <p> [returning\|fresh]` | type the name and password (`fresh` drives character generation); wait for the server's `[rig-bridge] player <p> in` (cap `RIG_LOGIN_CAP`) |
 | `logout <p>` | stop the client; wait for `[rig-bridge] player <p> out` |
 | `wiggle` | (re)start the idle wiggler on every booted display; `run` starts it after the first login unless `WIGGLE=0` |
@@ -130,11 +135,23 @@ TES3MP character-generation dialog sequence.
 
 ### 3.4 Setup (server-pushed)
 
-`console <p> "<mwscript>"`, `console-file <p> setup/<f>.console`,
-`console-object <p> "<cell>" <refnum-mpnum> "<cmd>"`, `server <p> "<lua>"`,
-`save <p>` / `save cell "<cell>"`, `probe <p> <kind|dump>`.
-These need the server bridge, which does not execute commands yet: each records `SKIP` with
-detail `bridge: not implemented` and still mark.
+The server pushes setup to a logged-in player through the rig's bridge
+(`overlay/scripts/custom/rig-bridge.lua`, §8). Each verb marks before it acts, waits for the bridge's
+answer (cap `RIG_BRIDGE_CAP`, default 5 s) and records `OK` with the answer, or `FAIL` with the
+bridge's reason (player not logged in, a Lua error). **No answer within the cap stops the scenario
+as `INFRA`**, like a failed boot. Console commands go through the server on purpose: a client that
+runs a console command the server did not queue is kicked by stock CoreScripts
+([KB-21](cookbook/KB-21-server-pushed-console-command.md)).
+
+| Verb | Effect |
+|---|---|
+| `console <p> "<mwscript>"` | the server runs `logicHandler.RunConsoleCommandOnPlayer(pid, cmd, false)`: p's client executes the command with p as the console's selected object. `OK` means the server sent it; assert its effect afterwards (`probe`, a client or server line). One line; no tabs |
+| `console-file <p> setup/<f>.console` | every line of the file that is not blank or a `#` comment, in order, as one `console` each; one row. A refused line fails the row naming `<f>:<line>` |
+| `console-object <p> "<cell>" <refnum>-<mpnum> "<mwscript>"` | `logicHandler.RunConsoleCommandOnObjects` on that object of the cell, run by p's client |
+| `server <p> "<lua>"` | runs the Lua chunk inside the server, with `pid` (p's) and `player` (`Players[pid]`) bound; other names resolve to the server's globals, and new globals the chunk assigns stay in its own environment. A returned value is in the row's detail (`returned …`); an error fails the row |
+| `save <p>` | `Players[pid]:SaveToDrive()`: `player/<p>.json` is current for `assert json` |
+| `save cell "<cell>"` | `LoadedCells[cell]:SaveToDrive()` (the cell must be loaded): `cell/<cell>.json` is current (a cell is otherwise written when it unloads) |
+| `probe <p> <kind\|dump>` | ask p's client probe for a report (§7); waits until the probe's `[rigprobe:done] … seq=<seq>` line arrives (cap `RIG_PROBE_CAP`, default 10 s; a silent client is `FAIL`). `OK` names the seq and the line count. `SKIP` when the probe is off or never became ready. Does not mark |
 
 ### 3.5 Waits
 
@@ -142,7 +159,7 @@ detail `bridge: not implemented` and still mark.
 |---|---|
 | `wait server <ERE> [cap]` | poll the server log past the last mark; default cap 10 s; a timeout is `FAIL` |
 | `wait client <p> <ERE> [cap]` | the same on the client log |
-| `wait probe <p> <ERE> [cap]` | probe not available yet: `SKIP` |
+| `wait probe <p> <ERE> [cap]` | poll `probe-<p>.log` past the last mark: request lines and the probe's own `seq=0` lines (heartbeat, quest and cell events). `SKIP` when the probe is off or never became ready |
 | `wait stable <p> <crop\|FULL> [cap] [eps] [delta]` | screen-stability wait ([KB-15](cookbook/KB-15-screen-stability-wait.md)); the baseline is the frame grabbed before the player's last input verb; a timeout is `OK` with detail `timeout` |
 
 ### 3.6 Assertions
@@ -155,12 +172,13 @@ Each records `PASS` or `FAIL` and never aborts the scenario.
 | `assert client <p> <ERE> [cap]` | the client log past the last mark, polled |
 | `assert absent server <ERE>` / `assert absent client <p> <ERE>` | whole log: no line matches |
 | `assert count server <fixed> <op> <n>` / `assert count client <p> <fixed> <op> <n>` | whole log, `grep -cF`; ops `= == != < <= > >=`, **quoted** (`'>='`: unquoted, `>` is a shell redirection) |
-| `assert probe …`, `assert probe-delta …` | probe not available yet: `SKIP` |
+| `assert probe <p> <kind> <field><op><value>…` | the lines of the **last `probe` request** that answered `<kind>` for p (`probe p <kind>` or `probe p dump`), by its seq: `PASS` when one line meets every condition. Ops `=` `!=` (numbers compare as numbers, else as strings), `<` `<=` `>` `>=` (numbers), `~` (ERE). **Quote conditions holding `<` or `>`**: `'dist<400'`. A `FAIL` quotes the request's lines; no earlier request is a `FAIL`. Heartbeat and event lines (`seq=0`) are never read. A kind or field the client's probe lacks (its `caps=`) is `SKIP` naming the cap; so is a scenario with the probe off |
+| `assert probe-delta <p> <kind> <field> <op> <n> [<cond>…] [<seqA> <seqB>]` | the field's value in request B minus request A (default: the last two requests that answered `<kind>`), compared with `<n>` (`= != < <= > >=`, numbers). In each request the first line that meets the optional conditions and holds a numeric `<field>` is used: `assert probe-delta b nearby dist '<' 0 actor=a` |
 | `assert json <relpath> '<python expression>'` | `python3 -I`; `d` is the parsed JSON document at `<work copy>/data/<relpath>`; truthy = `PASS` |
 | `shot <p> <name> [crop]` | capture to `shots/<name>.png`. A blessed `reference-images/<name>.png` → compared (over tolerance: `REGRESSION`). None → `UNBLESSED` (exit 0); under `--strict-refs` → `NO-REFERENCE` (counts as a failure). A shot used only as a `pair` input is `OK` in the final `steps.tsv` (`run.log`, written live, still shows `UNBLESSED`). A cropped shot compares against a reference of the cropped size; a size mismatch is a `REGRESSION`. |
 | `pair <name> <A> <B> [metric] [floor]` | shots A and B must differ: metric ≥ floor (default: the manifest row `<name>`, else `RMSE 0.02`) |
 | `signature [name]` | the server log's event signature against `reference-logs/<name>.events` with `LOG_MARKERS` (default name: `NAME`); differs → `REGRESSION`; none → `UNBLESSED` / `NO-REFERENCE` |
-| `checkpoint <name> [sp\|mp-only] [divergent]` | a full-screen shot per logged-in player into `checkpoints/<name>/`, plus a placeholder `<p>.probe` until the probe exists; the mode words are recorded for a later single-player comparison and change nothing now |
+| `checkpoint <name> [sp\|mp-only] [divergent]` | per logged-in player, into `checkpoints/<name>/`: a full-screen shot `<p>.png` and `<p>.probe`, a `probe <p> dump` (every kind, by its seq; a comment line instead when the probe is off). The mode words are recorded for a later single-player comparison and change nothing now |
 
 ### 3.7 Misc
 
@@ -208,7 +226,7 @@ failing steps of every attempt of a run with the file, byte window and line rang
 | 0 | `PASS` / `PASS-RETRY` | all assertions passed; references within tolerance, or `UNBLESSED` without `--strict-refs` |
 | 1 | `FAIL` | an assertion or wait failed, or `NO-REFERENCE` under `--strict-refs` |
 | 2 | `REGRESSION` | assertions passed but a blessed frame or signature moved |
-| 3 | `INFRA` | prerequisite, scenario-file, boot or login failure, or the server died |
+| 3 | `INFRA` | prerequisite, scenario-file, boot or login failure, the server bridge not answering, or the server or a client died |
 | 4 | `SKIP` | the content profile is not present on this box (the `rig.conf` key is named) |
 | 64 | — | usage error |
 
@@ -237,6 +255,9 @@ $RIG_RUNS/<YYYYmmdd-HHMMSS>-<name|set>/     (or --out)
     shots/<name>.png         captures + captures.tsv
     review/                  compare/logcheck output: diffs, candidate signatures
     checkpoints/<name>/      <p>.png and <p>.probe per checkpoint
+    probe-<p>.log            the [rigprobe:*] lines of client-<p>.log (PROBE=1), one per line
+    probe/                   the probe content the clients loaded (data= dir), with its probe_conf.lua
+    bridge/                  the setup commands and the bridge's answers: cmd-<seq>.meta/.lua, done-<seq>, err-<seq>
     artifacts/               files copied by `artifact`
     corescripts/             the CoreScripts work copy (removed unless --keep-work)
     attempt-<k>/             an earlier attempt's tree (--retry-failed)
@@ -253,3 +274,64 @@ Every display is `RIG_SCREEN=1280x720x24` (`bin/rig doctor` fails otherwise unle
 `click`/`mouse` take screen pixels; `look`/`turn` take offsets from `640,360`; a crop is
 `WxH+X+Y` in screen pixels (ImageMagick geometry) or `FULL`. Find coordinates with
 [KB-13](cookbook/KB-13-find-gui-click-coordinates.md).
+
+## 7. The client probe
+
+`PROBE=1` loads `probe/rig-probe.omwscripts` (a read-only Lua `PLAYER` script; OpenMW ≥ 0.48) as the
+**last** content file of every client and lists it last in the server's `requiredDataFiles.json`, so
+the plugin lists stay entry-for-entry equal. It is installed per run (`rig_use_probe` in
+`lib/rig.sh`): the profile `openmw.cfg` and the work copy are run-scoped, nothing else is written.
+
+**Lines.** Lua `print` goes to the client log at Info level; the runner copies the probe's lines into
+`probe-<p>.log`, each starting at its tag:
+
+```
+[rigprobe:<kind>] p=<player> t=<simulation time> seq=<n> <key>=<value> ...
+```
+
+A value holding spaces is `"quoted"`. `seq=<n>` echoes the request (the bridge's command seq);
+`seq=0` marks the probe's own lines. Every request ends with
+`[rigprobe:done] … seq=<n> kind=<kind> lines=<count>` (plus `missing=<kinds>` the client lacks, or
+`error=unknown-kind`). `p=` is the name the engine gives the player record: empty or the content's
+default name before login, the login name after.
+
+**When it prints.** `ready` once, on the first frame the world simulation runs: `probe=1 version=1
+caps=<list> period=<s> range=<units>`. A request: the console command `lua rigprobe <kind|dump> <seq>`,
+which only the server sends (the `probe` verb). Events with `seq=0`: `quest` when a quest index
+changes (the engine's `onQuestUpdate`, also when the server loads the journal at login), `cell` when
+the player's cell changes, `inv` when the inventory changes (checked every 2 s). A heartbeat with
+`seq=0`: `cell` and `stats` every `RIG_PROBE_PERIOD` seconds (default 5).
+
+| kind | one line per … | fields |
+|---|---|---|
+| `cell` | request | `cell` (name) `id` `x y z` (rounded) `exterior` (0/1) `gridx gridy` (exteriors) |
+| `stats` | request | `hp hpbase mp mpbase fat fatbase` (current and base, rounded) `level` `stance` (`nothing`/`weapon`/`spell`) |
+| `quest` | started quest | `id stage finished` (0/1) |
+| `topics` | known topic, after one `n=<count>` line | `topic` |
+| `inv` | record id, after one `n=<ids> more=0/1` line (at most 40) | `item=<id>:<count>` `id` `count` |
+| `nearby` | actor, door or container within `RIG_PROBE_RANGE` (default 2048), nearest first (at most 80) | actors: `actor` (name; a remote player is an NPC named after its login) `rec` `dist` `kind` (`npc`/`creature`/`player`) `stance` `anim` (lower-body animation group, `none` when idle without one) `animup` (torso group) `hp`; doors and containers: `obj` (record id) `name` `kind` (`door`/`container`) `dist` `lock` (level) `locked` (0/1) |
+| `time` | request | `gametime` (seconds) `hour` `day` `scale` |
+| `weather` | request | `weather` `next` (record ids; `none` in an interior) `transition` |
+
+`dump` answers every kind in this order. **Caps** are the bindings this engine has: `cell stats
+stance quest topics inv nearby anim lock time weather`; a kind (or the `anim`, `animup`, `lock`,
+`locked`, `stance` fields) whose cap is missing is `SKIP` in `assert probe`. `RIG_PROBE_CAPS_OFF`
+(comma list) makes the probe report caps as missing: a way to test that path.
+
+## 8. The server bridge
+
+`overlay/scripts/custom/rig-bridge.lua` is layered into every CoreScripts work copy. With
+`RIG_BRIDGE_DIR` set in the server's environment (the runner sets it to `<run>/bridge`), a 250 ms
+timer executes command files in seq order, 1, 2, 3 …:
+
+| File | Content |
+|---|---|
+| `cmd-<seq>.meta` | one line, tab-separated: `<verb> <player> <arg>…`; written to a temp name and renamed |
+| `cmd-<seq>.lua` | the chunk of a `lua` command, written before its `.meta` |
+| `done-<seq>` | one line: what ran (`sent to pid 0`, `returned 3`, `saved player a`) |
+| `err-<seq>` | one line: why not (`player zz is not logged in`, `runtime: …`) |
+
+Verbs: `console <p> <cmd>`, `object <p> <cell> <refnum-mpnum> <cmd>`, `probe <p> <kind>` (sends
+`lua rigprobe <kind> <seq>`), `lua <p>`, `save <p>`, `savecell - <cell>`. The bridge adds one global
+(`RigBridgePoll`, the timer callback TES3MP calls by name).
+

@@ -1,12 +1,17 @@
-# Verification: logs, static references, dynamic pairs
+# Verification: logs, the client probe, static references, dynamic pairs
 
-Every run produces two kinds of signal. Choose the weakest sufficient one for each assertion — a
-log gate beats a screenshot whenever the feature leaves a log trace.
+Every run produces three kinds of signal. Choose the weakest sufficient one for each assertion — a
+log gate beats a probe line, and a probe line beats a screenshot.
 
 - **Logs — the deterministic gate.** `assert server|client` and `wait` verbs poll the server/client log for
   each feature's proof, and `lib/logcheck.sh` compares a normalized **event signature** of the whole
   run to a blessed one (catching a sync packet/callback that *stopped firing* — invisible to a
   screenshot, fatal to multiplayer).
+- **The client probe — what a client's engine holds.** With `PROBE=1` a read-only Lua player script
+  in every client prints engine state on request (`probe <p> <kind>`, then `assert probe` /
+  `assert probe-delta`): the actors near the player with their distance, stance, animation and
+  health, the player's cell, stats, inventory, quests, topics, game time and weather
+  ([SCENARIO-FORMAT.md](SCENARIO-FORMAT.md) §7).
 - **Screenshots — the rendering gate.** `lib/compare.sh` compares each checkpoint frame to a blessed
   reference with a per-image tolerance (**STATIC**), or a script gates a **DYNAMIC** frame pair on the
   motion *between* two frames.
@@ -40,6 +45,25 @@ isn't logged, restate the assertion as a logged consequence:
   "cast" line.)
 
 This converts a visual-only check into a deterministic one and is the core trick of scenario design.
+
+### When no log line exists: ask the probe
+
+What neither log records is often state the receiving client's engine holds, and the client probe
+reads it there (OpenMW ≥ 0.48 clients):
+
+- "a sees b" → `probe a nearby` then `assert probe a nearby actor=b 'dist<400'`: a's engine has an
+  actor named b near the player. A remote player is an NPC named after its login.
+- "b drew a weapon" (drawState is not logged) → `assert probe c nearby actor=b stance=weapon` on the
+  observer c.
+- "the remote avatar animates" → `anim~idle` (lower body) / `animup` (torso) on that actor's line.
+- "the hit did damage" → `assert probe-delta d stats hp '<' 0` across two `probe d stats` requests.
+- "the journal entry reached b" → `assert probe b quest id=<quest> 'stage>=10'`.
+
+Each request carries a seq and an assertion reads only that request's lines, so an answer from
+before the event never passes it: request after the event, then assert. The probe sees one client's
+engine; whether the server accepted the change is still the server log's question (assert both when
+both matter). The probe reports which kinds this engine supports (`caps=`); an assertion on a
+missing one is `SKIP`, not `FAIL`.
 
 ### The log signature (`lib/logcheck.sh`)
 

@@ -28,12 +28,23 @@ signature vocabulary) is `scenario.conf`. In one run:
 3. **Both clients are admitted** — server logs `Client was allowed to connect` ×2.
 4. **Nobody drowned** — neither client log has `committed suicide` (the water-breathing fixture
    holds).
-5. **No server error** — `assert absent server "$RIG_TRIPWIRES"`.
-6. **Server-log signature** — `reference-logs/example-server.events` (6 normalized events: both
+5. **a's engine holds b** (the client probe, `PROBE=1`) — `probe a nearby` lists an actor named `b`
+   within 400 units of `a` (the fixture puts them ~256 apart). Its `anim` field is not asserted:
+   b's avatar loads as the model in some runs (`anim=idle`) and as the missing-mesh placeholder in
+   others (`anim=none`), see below.
+6. **A server-pushed console command runs on a, and nobody is kicked** — `console a
+   "ModCurrentFatigue -50"` goes through the rig's server bridge; the server logs `Accepted
+   ConsoleCommand from a` for the client's echo (an unqueued command is rejected and the client
+   kicked, cookbook KB-21), and two `probe a stats` requests around it read a's fatigue drop by 50
+   (`assert probe-delta a stats fat '<' -20`).
+7. **No server error** — `assert absent server "$RIG_TRIPWIRES"`.
+8. **Server-log signature** — `reference-logs/example-server.events` (6 normalized events: both
    connects, both player creations, the compat shim's line, the authority line). A moved signature is
    a `REGRESSION` (exit 2).
 
 `login` itself fails the run as `INFRA` unless the server logs `[rig-bridge] player <name> in`.
+The bridge and probe lines are outside the signature vocabulary, so they leave the signature
+unchanged.
 
 ## Screenshot signals demonstrated
 

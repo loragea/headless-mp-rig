@@ -100,7 +100,9 @@ lib/scenario.sh      the runner: conf parser, verbs, log windows, verdict, run s
 lib/cli.sh           the authoring and diagnosis subcommands of bin/rig
 lib/compare.sh       screenshot regression compare (magick, per-image tolerance) — library + CLI + selftest
 lib/logcheck.sh      log event-signature compare (masked, ordered) — library + CLI + selftest
-overlay/             the rig's server-side bridge, layered into every CoreScripts work copy
+overlay/             the rig's server-side bridge, layered into every CoreScripts work copy: anchor log
+                     lines and the setup commands (console, server Lua, save, probe requests)
+probe/               the client probe: a read-only Lua player script loaded with PROBE=1 (OpenMW >= 0.48)
 templates/scenario/  the scaffold `bin/rig new` copies
 scenarios/example/   the worked example: fixture, overlay, references (free example-suite content)
 docs/                the manuals (below)
@@ -109,7 +111,8 @@ docs/                the manuals (below)
 ## Documentation
 
 - **[docs/SCENARIO-FORMAT.md](docs/SCENARIO-FORMAT.md)** — the scenario directory, every
-  `scenario.conf` key, every `steps.sh` verb, log windows, exit codes and the run directory.
+  `scenario.conf` key, every `steps.sh` verb, log windows, exit codes, the run directory, the client
+  probe's lines and the server bridge's command files.
 - **[docs/WRITING-SCENARIOS.md](docs/WRITING-SCENARIOS.md)** — how to author a test: prepare a start
   state (position players, set spells/gear/skills, edit server save files), the fixture format,
   testing with **real game data** vs free content, avoiding the vanity camera, the action vocabulary,

@@ -11,8 +11,14 @@
 #            mouse <p> <x> <y>           click <p> <x> <y>        rmb <p>         cast <p>
 #            look <p> <dx> <dy>          turn <p> <dx> <steps>    chat <p> "/cmd"   hidechat <p>
 #            scroll <p> <quickkey> [<closekey>|none] [until server <ERE> <cap> tries <n>]
-# Setup      console <p> "<mwscript>"    server <p> "<lua>"       save <p>        (server bridge: not implemented yet, SKIP)
-# Waits      wait server <ERE> [cap]     wait client <p> <ERE> [cap]     wait stable <p> <crop|FULL> [cap]
+# Setup      console <p> "<mwscript>"    console-file <p> setup/<f>.console     server <p> "<lua>"
+#            console-object <p> "<cell>" <refnum>-<mpnum> "<mwscript>"     save <p> | save cell "<cell>"
+#            (pushed by the server to a logged-in player; no bridge answer stops the run as INFRA)
+# Probe      probe <p> <cell|stats|quest|topics|inv|nearby|time|weather|dump>   (PROBE=1 in scenario.conf)
+#            assert probe <p> <kind> <field><op><value>...   ops = != < <= > >= ~ (quote: 'dist<400')
+#            assert probe-delta <p> <kind> <field> <op> <n> [<cond>...]   (the last two requests)
+# Waits      wait server <ERE> [cap]     wait client <p> <ERE> [cap]     wait probe <p> <ERE> [cap]
+#            wait stable <p> <crop|FULL> [cap]
 # Asserts    assert server <ERE> [cap]   assert client <p> <ERE> [cap]   (log past the last mark)
 #            assert absent server|client <p> <ERE>                       (whole log)
 #            assert count server|client <p> <fixed> <op> <n>             (whole log; quote the op: '>=')
