@@ -117,7 +117,7 @@ recorded `SKIP`, the RESULT is `INFRA`, exit 3.
 `console-object <p> "<cell>" <refnum-mpnum> "<cmd>"`, `server <p> "<lua>"`,
 `save <p>` / `save cell "<cell>"`, `probe <p> <kind|dump>`.
 These need the server bridge, which does not execute commands yet: each records `SKIP` with
-detail `bridge: R3` and still marks.
+detail `bridge: not implemented` and still mark.
 
 ### 3.5 Waits
 

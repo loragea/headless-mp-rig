@@ -519,7 +519,7 @@ _scv_hidechat() {
 # ================================================================================================
 # Setup verbs — need the server bridge's command channel (not available yet): SKIP, still mark
 # ================================================================================================
-_sc_bridge_stub() { _sc_mark_all; _sc_close_row SKIP "bridge: R3"; }
+_sc_bridge_stub() { _sc_mark_all; _sc_close_row SKIP "bridge: not implemented"; }
 _scv_console()        { _sc_begin console "$@"        || return 0; _sc_bridge_stub; }
 _scv_console_file()   { _sc_begin console-file "$@"   || return 0; _sc_bridge_stub; }
 _scv_console_object() { _sc_begin console-object "$@" || return 0; _sc_bridge_stub; }
@@ -571,7 +571,7 @@ _scv_wait() {
         client) p=${2:-}; _sc_known "$p" || { _sc_row FAIL "" "wait client: unknown player '$p'"; return 1; }
                 [ -n "${3:-}" ] || { _sc_row FAIL "" "wait client: no ERE"; return 1; }
                 _sc_window_match "$p" "$3" "${4:-10}" FAIL ;;
-        probe)  _sc_row SKIP "" "probe: R3" ;;
+        probe)  _sc_row SKIP "" "probe: not available" ;;
         stable) _sc_wait_stable "${@:2}" ;;
         *)      _sc_row FAIL "" "wait: expected server|client|probe|stable, got '$src'"; return 1 ;;
     esac
@@ -632,7 +632,7 @@ _scv_assert() {
             if [ "$rc" = 2 ]; then _sc_row FAIL "" "assert count: unknown op '${4:-}' (= == != < <= > >=)"
             elif [ "$rc" = 0 ]; then _sc_row PASS "server:0-$(_sc_size "$file")" "count('${3:-}')=$c ${4} $5"
             else _sc_row FAIL "server:0-$(_sc_size "$file")" "count('${3:-}')=$c, wanted ${4} $5"; fi ;;
-        probe|probe-delta) _sc_row SKIP "" "probe: R3" ;;
+        probe|probe-delta) _sc_row SKIP "" "probe: not available" ;;
         json) _sc_assert_json "${2:-}" "${3:-}" ;;
         *) _sc_row FAIL "" "assert: expected server|client|absent|count|probe|probe-delta|json, got '$kind'"; return 1 ;;
     esac
@@ -732,7 +732,7 @@ _scv_checkpoint() {
     for p in "${SC_PLAYERS[@]}"; do
         [ -n "${SC_IN[$p]:-}" ] || continue
         rig_grab_region "$(_sc_disp "$p")" FULL "$dir/$p.png"
-        printf '# checkpoint %s player %s mode=%s %s\n# probe dump not available (client probe: R3)\n' \
+        printf '# checkpoint %s player %s mode=%s %s\n# probe dump not available (no client probe)\n' \
             "$name" "$p" "${mode:-sp}" "$div" > "$dir/$p.probe"
         n=$((n+1))
     done
@@ -1132,28 +1132,28 @@ scenario_selftest() {
     mkdir -p "$t/s1"
     cat > "$t/s1/scenario.conf" <<'EOF'
 # a comment
-NAME=journal-topic-sync
+NAME=journal-sync
 PURPOSE="a journal change on one client reaches the other"
 PLAYERS="a b"
-TAGS="seam:29 tier:slice"   # trailing comment
+TAGS="smoke two-player"   # trailing comment
 CONTENT=example
 LOG_MARKERS="Called \"OnPlayerJournal\"|$RIG_TRIPWIRES"
 COST=3
 WIGGLE=0
-P_QUEST_ID=a1_1_findspymaster
+P_QUEST_ID=quest_01
 P_TOPIC="latest rumors"
 EOF
     if out=$(_sc_conf_check "$t/s1/scenario.conf"); then _ok "conf: fixed keys + P_* accepted"; else _bad "conf: fixed keys + P_* accepted" "$out"; fi
     _check "conf: quoted P_ value"        "$(_sc_conf_get "$t/s1/scenario.conf" P_TOPIC)" "latest rumors"
-    _check "conf: value with comment"     "$(_sc_conf_get "$t/s1/scenario.conf" TAGS)" "seam:29 tier:slice"
-    _check "conf: bare value"             "$(_sc_conf_get "$t/s1/scenario.conf" P_QUEST_ID)" "a1_1_findspymaster"
-    if _sc_has_tags "$t/s1" tier:slice seam:29 && ! _sc_has_tags "$t/s1" tier:checkpoint; then _ok "conf: tag selection"; else _bad "conf: tag selection"; fi
+    _check "conf: value with comment"     "$(_sc_conf_get "$t/s1/scenario.conf" TAGS)" "smoke two-player"
+    _check "conf: bare value"             "$(_sc_conf_get "$t/s1/scenario.conf" P_QUEST_ID)" "quest_01"
+    if _sc_has_tags "$t/s1" two-player smoke && ! _sc_has_tags "$t/s1" nightly; then _ok "conf: tag selection"; else _bad "conf: tag selection"; fi
     printf 'NAME=x\nFOO=1\np_lower=2\n' > "$t/bad.conf"
     out=$(_sc_conf_check "$t/bad.conf"); rc=$?
     if [ "$rc" = 1 ] && grep -q 'unknown key FOO' <<<"$out" && grep -q 'unknown key p_lower' <<<"$out"; then _ok "conf: unknown keys rejected by name"
     else _bad "conf: unknown keys rejected by name" "rc=$rc out=$out"; fi
     if ( _sc_load_conf "$t/s1" && [ "$P_TOPIC" = "latest rumors" ] && [ "${SC_SLOT[b]}" = 2 ] && [ "${SC_PASS[a]}" = a ] \
-         && [[ $LOG_MARKERS == *"Server crash"* ]] && [ "$(bash -c 'echo "$P_QUEST_ID"')" = a1_1_findspymaster ] ); then
+         && [[ $LOG_MARKERS == *"Server crash"* ]] && [ "$(bash -c 'echo "$P_QUEST_ID"')" = quest_01 ] ); then
         _ok "conf: sourced for a run (P_* exported, slots, password default, \$RIG_TRIPWIRES)"
     else _bad "conf: sourced for a run"; fi
 
