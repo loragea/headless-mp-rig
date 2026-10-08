@@ -324,6 +324,42 @@ weather`; a kind, or a field whose cap is missing (`anim`/`animup` → `anim`, `
 `lock`, `stance`, `dead`, `deathdone`, `weapon` → `equip`), is `SKIP` in `assert probe`. `RIG_PROBE_CAPS_OFF`
 (comma list) makes the probe report caps as missing: a way to test that path.
 
+**Conditions.** All conditions of one `assert probe` must hold on **one** line. For a kind with many
+lines, name the row with its key field (`actor=`, `rec=`, `obj=`, `id=`, `item=`, `spell=`,
+`effect=`, `faction=`) next to the field you test. A value holding spaces is compared without its
+quotes: `'rec=some npc'`; `~` is an ERE on the unquoted value. `anim` values are the engine's
+animation group names (`idle`, `idle2`–`idle9`, `walkforward`, `runforward`, `weapononehand`, …).
+`nearby` and `items` see only the active cells (an interior: that cell; an exterior: the 3×3 grid
+around the player), and only within the range.
+
+**What each field witnesses.** A probe line reports this client's engine. It is evidence of
+synchronisation only when the client could have got the value from the network alone. On a client
+that did **not** act:
+
+| kind.field | set on the observing client by | witness of sync? |
+|---|---|---|
+| `nearby` row exists (`actor=`, `rec=`), `kind` | creation of the remote player or remote-controlled actor from packets | yes |
+| `nearby.x y z` | position packets | yes |
+| `nearby.dist` | position packets, **relative to the observer**: it also changes when the observer moves | yes, with care; prefer `x y z` for motion |
+| `nearby.stance` | animation-flag packets (AI does not run on a remote-controlled actor) | yes |
+| `nearby.anim`, `animup` | **this client's** animation controller: idle and movement groups play whenever a skeleton is loaded, and the authority's AI picks `idle2`–`idle9` at random | only for a group that neither idling, movement nor combat produce; `anim~idle` proves a rendered skeleton, not sync |
+| `nearby.hp` | stats packets on a third client; on the **attacker's** client also its local hit on the copy | yes on a third client; never assert damage from the attacker's own `nearby hp` |
+| `nearby.dead`, `weapon` | death and equipment packets | yes |
+| `nearby.lock`, `locked` | lock packets, unless an MWScript on the door locks it (every client runs it) | yes on a scriptless door |
+| `items` row | object place/delete packets | yes |
+| `stats.hp mp fat` (own) | incoming damage and spell packets **and** local regeneration (fatigue regenerates: give a `fat` delta a margin) | yes for a received hit, with a margin |
+| `stats.dead`, `deathdone` (own) | the player's own death | local |
+| `cell.*` (own) | the player's own movement | only after a server-pushed teleport |
+| `quest`, `topics` (own) | shared-journal packets when another player acts (if the server shares the journal) | yes on the player who did not act |
+| `inv` (own) | the player's own actions; a pickup also waits for the server's echo | medium |
+| `effects`, `spells`, `faction` (own) | spell and faction packets when the server or another player acts | yes when this player did not cast or join |
+| `time.*` | **this client's clock**, advancing at the same rate everywhere: equal times prove nothing | only after a server-pushed time change |
+| `weather.*` | weather packets from the region's authority, but the local weather manager also runs | only a weather forced that the region would not pick |
+
+**Joining by hand.** The probe is listed in the server's `requiredDataFiles.json` for the run, so the
+server refuses any client without it: a human joining a world from `bin/rig up` needs
+`rig-probe.omwscripts` last in their own content list too (the run's `probe/` directory holds it).
+
 ## 8. The server bridge
 
 `overlay/scripts/custom/rig-bridge.lua` is layered into every CoreScripts work copy. With
