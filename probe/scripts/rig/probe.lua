@@ -38,6 +38,7 @@ for name in string.gmatch(tostring(conf.off or ''), '[%w_]+') do disabled[name] 
 
 local INV_LIMIT = 40
 local NEARBY_LIMIT = 80
+local LIST_LIMIT = 80     -- items, effects, faction, spells: lines per request
 
 -- ---------------------------------------------------------------------------------------------
 -- Formatting
@@ -93,6 +94,13 @@ local CAP_TESTS = {
     { 'topics',  function() return isFn(types.Player.journal) and types.Player.journal(self).topics ~= nil end },
     { 'inv',     function() return isFn(types.Actor.inventory) end },
     { 'nearby',  function() return nearby.actors ~= nil and nearby.doors ~= nil and nearby.containers ~= nil end },
+    { 'items',   function() return nearby.items ~= nil end },
+    { 'effects', function() return isFn(types.Actor.activeSpells) and isFn(types.Actor.activeEffects) end },
+    { 'faction', function() return isFn(types.NPC.getFactions) and isFn(types.NPC.getFactionRank) end },
+    { 'spells',  function() return isFn(types.Actor.spells) end },
+    { 'dead',    function() return isFn(types.Actor.isDead) end },
+    { 'deathdone', function() return isFn(types.Actor.isDeathFinished) end },
+    { 'equip',   function() return isFn(types.Actor.getEquipment) and types.Actor.EQUIPMENT_SLOT ~= nil end },
     { 'anim',    function() return hasAnimation and isFn(animation.getActiveGroup) and animation.BONE_GROUP ~= nil end },
     { 'lock',    function() return isFn(types.Lockable.getLockLevel) and isFn(types.Lockable.isLocked) end },
     { 'time',    function() return isFn(core.getGameTime) end },
@@ -129,6 +137,26 @@ local function animOf(actor, group)
     if g == nil or g == '' then return 'none' end
     return g
 end
+local function deadOf(actor)
+    if not caps.dead then return nil end
+    return get(types.Actor.isDead, actor)
+end
+local function deathDoneOf(actor)
+    if not caps.deathdone then return nil end
+    return get(types.Actor.isDeathFinished, actor)
+end
+local function weaponOf(actor)
+    if not caps.equip then return nil end
+    local ok, w = pcall(types.Actor.getEquipment, actor, types.Actor.EQUIPMENT_SLOT.CarriedRight)
+    if not ok then return nil end
+    if w == nil then return 'none' end
+    return get(function() return w.recordId end)
+end
+local function idOf(v)
+    if v == nil then return nil end
+    if type(v) == 'string' then return v end
+    return get(function() return v.id end) or tostring(v)
+end
 local function dyn(actor, which)
     local s = get(function() return types.Actor.stats.dynamic[which](actor) end)
     if s == nil then return nil, nil end
@@ -159,6 +187,8 @@ kinds.stats = function(seq)
         'hp', hp, 'hpbase', hpbase, 'mp', mp, 'mpbase', mpbase, 'fat', fat, 'fatbase', fatbase,
         'level', get(function() return types.Actor.stats.level(self).current end),
         'stance', stanceOf(self),
+        'dead', deadOf(self),
+        'deathdone', deathDoneOf(self),
     })
     return 1
 end
@@ -225,10 +255,12 @@ kinds.nearby = function(seq)
             local d = (a.position - here):length()
             if d <= conf.range then
                 local kind = actorKind(a)
+                local pos = a.position
                 rows[#rows + 1] = { d, 'actor', {
                     'actor', recordName(a, kind) or a.recordId, 'rec', a.recordId, 'dist', round(d), 'kind', kind,
+                    'x', round(pos.x), 'y', round(pos.y), 'z', round(pos.z),
                     'stance', stanceOf(a), 'anim', animOf(a, 'LowerBody'), 'animup', animOf(a, 'Torso'),
-                    'hp', (dyn(a, 'health')) } }
+                    'hp', (dyn(a, 'health')), 'dead', deadOf(a), 'weapon', weaponOf(a) } }
             end
         end
     end
@@ -257,6 +289,82 @@ kinds.nearby = function(seq)
     return n
 end
 
+-- Items lying in the active cells (not in containers or inventories), nearest first.
+kinds.items = function(seq)
+    local here = self.position
+    local rows = {}
+    for _, o in ipairs(nearby.items) do
+        local pos = o.position
+        local d = (pos - here):length()
+        if d <= conf.range then
+            rows[#rows + 1] = { d, { 'obj', o.recordId, 'name', get(function() return o.type.record(o).name end),
+                                     'count', get(function() return o.count end), 'dist', round(d),
+                                     'x', round(pos.x), 'y', round(pos.y), 'z', round(pos.z) } }
+        end
+    end
+    table.sort(rows, function(x, y) return x[1] < y[1] end)
+    local n = 0
+    for _, r in ipairs(rows) do
+        if n >= LIST_LIMIT then break end
+        emit('items', seq, r[2])
+        n = n + 1
+    end
+    return n
+end
+
+-- The player's active spells (one line each, then one per applied effect of it) and the summed
+-- active effects (net=1).
+kinds.effects = function(seq)
+    local n = 0
+    local function line(fields)
+        if n >= LIST_LIMIT then return end
+        emit('effects', seq, fields)
+        n = n + 1
+    end
+    for _, sp in pairs(types.Actor.activeSpells(self)) do
+        local id = get(function() return sp.id end)
+        local caster = get(function() return sp.caster end)
+        line({ 'spell', id, 'name', get(function() return sp.name end),
+               'caster', caster and get(function() return caster.recordId end) or nil,
+               'castername', caster and recordName(caster, actorKind(caster)) or nil })
+        for _, e in pairs(get(function() return sp.effects end) or {}) do
+            line({ 'spell', id, 'effect', idOf(get(function() return e.id end)),
+                   'mag', get(function() return e.magnitudeThisFrame end),
+                   'left', get(function() return e.durationLeft end) })
+        end
+    end
+    for _, e in pairs(types.Actor.activeEffects(self)) do
+        line({ 'net', 1, 'effect', idOf(get(function() return e.id end)), 'mag', get(function() return e.magnitude end) })
+    end
+    return n
+end
+
+kinds.faction = function(seq)
+    local ids = {}
+    for _, id in pairs(types.NPC.getFactions(self)) do ids[#ids + 1] = tostring(id) end
+    table.sort(ids)
+    emit('faction', seq, { 'n', #ids })
+    for i, id in ipairs(ids) do
+        if i > LIST_LIMIT then break end
+        emit('faction', seq, { 'faction', id, 'rank', get(types.NPC.getFactionRank, self, id) })
+    end
+    return math.min(#ids, LIST_LIMIT) + 1
+end
+
+kinds.spells = function(seq)
+    local rows = {}
+    for _, sp in pairs(types.Actor.spells(self)) do
+        rows[#rows + 1] = { get(function() return sp.id end) or '?', get(function() return sp.name end) }
+    end
+    table.sort(rows, function(x, y) return x[1] < y[1] end)
+    emit('spells', seq, { 'n', #rows })
+    for i, r in ipairs(rows) do
+        if i > LIST_LIMIT then break end
+        emit('spells', seq, { 'spell', r[1], 'name', r[2] })
+    end
+    return math.min(#rows, LIST_LIMIT) + 1
+end
+
 kinds.time = function(seq)
     local gt = core.getGameTime()
     emit('time', seq, { 'gametime', round(gt), 'hour', (gt / 3600) % 24, 'day', math.floor(gt / 86400),
@@ -273,7 +381,8 @@ kinds.weather = function(seq)
     return 1
 end
 
-local ORDER = { 'cell', 'stats', 'quest', 'topics', 'inv', 'nearby', 'time', 'weather' }
+local ORDER = { 'cell', 'stats', 'quest', 'topics', 'inv', 'nearby', 'items', 'effects', 'faction', 'spells',
+                'time', 'weather' }
 
 local function runKind(kind, seq)
     if not caps[kind] then return 0, kind end

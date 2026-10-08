@@ -305,17 +305,22 @@ the player's cell changes, `inv` when the inventory changes (checked every 2 s).
 | kind | one line per … | fields |
 |---|---|---|
 | `cell` | request | `cell` (name) `id` `x y z` (rounded) `exterior` (0/1) `gridx gridy` (exteriors) |
-| `stats` | request | `hp hpbase mp mpbase fat fatbase` (current and base, rounded) `level` `stance` (`nothing`/`weapon`/`spell`) |
+| `stats` | request | `hp hpbase mp mpbase fat fatbase` (current and base, rounded) `level` `stance` (`nothing`/`weapon`/`spell`) `dead` (0/1) `deathdone` (0/1: the death animation finished) |
 | `quest` | started quest | `id stage finished` (0/1) |
 | `topics` | known topic, after one `n=<count>` line | `topic` |
 | `inv` | record id, after one `n=<ids> more=0/1` line (at most 40) | `item=<id>:<count>` `id` `count` |
-| `nearby` | actor, door or container within `RIG_PROBE_RANGE` (default 2048), nearest first (at most 80) | actors: `actor` (name; a remote player is an NPC named after its login) `rec` `dist` `kind` (`npc`/`creature`/`player`) `stance` `anim` (lower-body animation group, `none` when idle without one) `animup` (torso group) `hp`; doors and containers: `obj` (record id) `name` `kind` (`door`/`container`) `dist` `lock` (level) `locked` (0/1) |
+| `nearby` | actor, door or container within `RIG_PROBE_RANGE` (default 2048), nearest first (at most 80) | actors: `actor` (name; a remote player is an NPC named after its login) `rec` `dist` `kind` (`npc`/`creature`/`player`) `x y z` (absolute position, rounded) `stance` `anim` (lower-body animation group, `none` when idle without one) `animup` (torso group) `hp` `dead` (0/1) `weapon` (record id of the right-hand equipment, `none`); doors and containers: `obj` (record id) `name` `kind` (`door`/`container`) `dist` `lock` (level) `locked` (0/1) |
+| `items` | item lying in the active cells within `RIG_PROBE_RANGE`, nearest first (at most 80) | `obj` (record id) `name` `count` `dist` `x y z` |
+| `effects` | active spell on the player, then one per applied effect of it, then one per summed active effect (at most 80 lines) | spell: `spell` (id) `name` `caster` (record id) `castername`; its effects: `spell` `effect` (id) `mag` (this frame) `left` (seconds; absent for constant effects); summed: `net=1` `effect` `mag` |
+| `faction` | faction the player is in, after one `n=<count>` line | `faction` (id) `rank` |
+| `spells` | spell the player knows, after one `n=<count>` line (at most 80) | `spell` (id) `name` |
 | `time` | request | `gametime` (seconds) `hour` `day` `scale` |
 | `weather` | request | `weather` `next` (record ids; `none` in an interior) `transition` |
 
 `dump` answers every kind in this order. **Caps** are the bindings this engine has: `cell stats
-stance quest topics inv nearby anim lock time weather`; a kind (or the `anim`, `animup`, `lock`,
-`locked`, `stance` fields) whose cap is missing is `SKIP` in `assert probe`. `RIG_PROBE_CAPS_OFF`
+stance quest topics inv nearby items effects faction spells anim lock dead deathdone equip time
+weather`; a kind, or a field whose cap is missing (`anim`/`animup` → `anim`, `lock`/`locked` →
+`lock`, `stance`, `dead`, `deathdone`, `weapon` → `equip`), is `SKIP` in `assert probe`. `RIG_PROBE_CAPS_OFF`
 (comma list) makes the probe report caps as missing: a way to test that path.
 
 ## 8. The server bridge

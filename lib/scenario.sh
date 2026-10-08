@@ -42,7 +42,7 @@ RIG_SCENARIOS=${RIG_SCENARIOS:-$RIG_ROOT/scenarios}   # --tag/--all search roots
 
 SC_DEFAULT_MARKERS=$LOG_MARKERS     # logcheck.sh's vocabulary, used when LOG_MARKERS is not set
 # The kinds the client probe answers (probe/scripts/rig/probe.lua); `dump` requests all of them.
-SC_PROBE_KINDS="cell stats quest topics inv nearby time weather"
+SC_PROBE_KINDS="cell stats quest topics inv nearby items effects faction spells time weather"
 SC_CONF_KEYS="NAME PURPOSE PLAYERS PASSWORDS TAGS CONTENT FIXTURE OVERLAY PROBE SETTINGS LOG_MARKERS COST WIGGLE"
 SC_VERBS="boot login logout wiggle settle key hold type mouse click rmb look turn chat cast scroll hidechat
 console console-file console-object server save probe wait assert shot pair signature checkpoint mark note artifact"
@@ -858,7 +858,7 @@ _sc_probe_need_caps() {
     return 0
 }
 # The cap a field needs beyond its kind's.
-_sc_probe_field_cap() { case $1 in anim|animup) echo anim;; lock|locked) echo lock;; stance) echo stance;; esac; }
+_sc_probe_field_cap() { case $1 in anim|animup) echo anim;; lock|locked) echo lock;; stance) echo stance;; dead) echo dead;; deathdone) echo deathdone;; weapon) echo equip;; esac; }
 # _sc_probe_lines <p> <kind> <seq> — the request's lines of that kind (raw, from probe-<p>.log).
 _sc_probe_lines() {
     local line s
