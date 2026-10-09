@@ -149,7 +149,8 @@ docs/                the manuals (below)
   tolerance rule `bin/rig calibrate` applies, freak-frame handling and blessing.
 - **[docs/cookbook/](docs/cookbook/)** — the headless-action recipes, one file each: casting, scroll
   timing, camera turns, inventory drag-and-drop, item pickup, finding GUI click coordinates, catching
-  a transient visual, and the combat-state confounds that make casts "flaky".
+  a transient visual, photographing a place by hand, and the combat-state confounds that make casts
+  "flaky".
 - **[docs/FEATURE-TESTS.md](docs/FEATURE-TESTS.md)** — worked patterns for feature guards: **PvP
   melee damage-sync**, **summon lifecycle + caster identity**, **magic-effect identity sync**, and
   **player→player effect sync** — each with its vehicle and its load-bearing assertions.

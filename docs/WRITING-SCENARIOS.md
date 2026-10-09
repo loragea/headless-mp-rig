@@ -296,6 +296,10 @@ scenario** — isolate it:
    `hooks.sh` (SCENARIO-FORMAT.md §3.8).
    That record is the point: it turns a Tier-C action into a Tier-B recipe.
 
+To look at a place rather than an action (a position, a path or an anomaly a test reports), move a
+camera player with server-pushed console commands and photograph it:
+[KB-23](cookbook/KB-23-photograph-a-place-by-hand.md).
+
 ---
 
 ## 9. Determinism caveats worth knowing up front
